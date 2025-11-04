@@ -1,0 +1,21 @@
+{
+  "type": "QP",
+  "iters": 3,
+  "random_fields": true,
+  "results": [
+    {
+      "N": 10000,
+      "avg_encode_latency_ns": 2.000000,
+      "p95_encode_latency_ns": 2.000000,
+      "encode_bandwidth_MBps": 6675.720215,
+      "encode_throughput_Mtokens_per_sec": 500.000000,
+      "avg_decode_latency_ns": 1.401267,
+      "p95_decode_latency_ns": 1.416800,
+      "decode_bandwidth_MBps": 9528.122482,
+      "decode_throughput_Mtokens_per_sec": 713.640040,
+      "total_bytes": 140000,
+      "bytes_per_token": 14,
+      "compression_ratio": 1.571429
+    }
+  ]
+}

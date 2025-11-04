@@ -1,0 +1,63 @@
+{
+  "type": "MR",
+  "iters": 10,
+  "random_fields": true,
+  "results": [
+    {
+      "N": 1000,
+      "avg_encode_latency_ns": 2.858100,
+      "p95_encode_latency_ns": 3.660000,
+      "encode_bandwidth_MBps": 4004.090759,
+      "encode_throughput_Mtokens_per_sec": 349.882789,
+      "avg_decode_latency_ns": 2.688100,
+      "p95_decode_latency_ns": 3.214000,
+      "decode_bandwidth_MBps": 4257.316245,
+      "decode_throughput_Mtokens_per_sec": 372.009970,
+      "total_bytes": 12000,
+      "bytes_per_token": 12,
+      "compression_ratio": 1.666667
+    },
+    {
+      "N": 10000,
+      "avg_encode_latency_ns": 1.384090,
+      "p95_encode_latency_ns": 1.753300,
+      "encode_bandwidth_MBps": 8268.314775,
+      "encode_throughput_Mtokens_per_sec": 722.496369,
+      "avg_decode_latency_ns": 1.367870,
+      "p95_decode_latency_ns": 1.758400,
+      "decode_bandwidth_MBps": 8366.359228,
+      "decode_throughput_Mtokens_per_sec": 731.063624,
+      "total_bytes": 120000,
+      "bytes_per_token": 12,
+      "compression_ratio": 1.666667
+    },
+    {
+      "N": 100000,
+      "avg_encode_latency_ns": 1.360795,
+      "p95_encode_latency_ns": 1.466420,
+      "encode_bandwidth_MBps": 8409.857324,
+      "encode_throughput_Mtokens_per_sec": 734.864546,
+      "avg_decode_latency_ns": 1.299165,
+      "p95_decode_latency_ns": 1.429450,
+      "decode_bandwidth_MBps": 8808.805500,
+      "decode_throughput_Mtokens_per_sec": 769.725170,
+      "total_bytes": 1200000,
+      "bytes_per_token": 12,
+      "compression_ratio": 1.666667
+    },
+    {
+      "N": 1000000,
+      "avg_encode_latency_ns": 4.171726,
+      "p95_encode_latency_ns": 7.125097,
+      "encode_bandwidth_MBps": 2743.251066,
+      "encode_throughput_Mtokens_per_sec": 239.708936,
+      "avg_decode_latency_ns": 3.402201,
+      "p95_decode_latency_ns": 4.626462,
+      "decode_bandwidth_MBps": 3363.732127,
+      "decode_throughput_Mtokens_per_sec": 293.927398,
+      "total_bytes": 12000000,
+      "bytes_per_token": 12,
+      "compression_ratio": 1.666667
+    }
+  ]
+}

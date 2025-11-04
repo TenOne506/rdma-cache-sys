@@ -18,6 +18,13 @@ struct A1Config {
     int iters = 10;
     bool random_fields = true;
     std::string output_json = "exp_a1_results.json";
+
+    // Hardware serialization unit modeling parameters
+    double encode_extra_ns = 0.0;      // additional per-token compute (ns)
+    double decode_extra_ns = 0.0;      // additional per-token compute (ns)
+    double encode_fixed_overhead_ns = 0.0; // fixed overhead per token (ns)
+    double decode_fixed_overhead_ns = 0.0; // fixed overhead per token (ns)
+    int pipeline_width = 1;            // number of parallel lanes (>=1)
 };
 
 static void parse_args(int argc, char** argv, A1Config& cfg) {
@@ -29,6 +36,11 @@ static void parse_args(int argc, char** argv, A1Config& cfg) {
         {"random", no_argument, 0, 'r'},
         {"typical", no_argument, 0, 'T'},
         {"output", required_argument, 0, 'o'},
+        {"encode_extra_ns", required_argument, 0, 1000},
+        {"decode_extra_ns", required_argument, 0, 1001},
+        {"encode_fixed_overhead_ns", required_argument, 0, 1002},
+        {"decode_fixed_overhead_ns", required_argument, 0, 1003},
+        {"pipeline_width", required_argument, 0, 1004},
         {0,0,0,0}
     };
     int c;
@@ -60,6 +72,11 @@ static void parse_args(int argc, char** argv, A1Config& cfg) {
             case 'r': cfg.random_fields = true; break;
             case 'T': cfg.random_fields = false; break;
             case 'o': cfg.output_json = optarg; break;
+            case 1000: cfg.encode_extra_ns = std::stod(optarg); break;
+            case 1001: cfg.decode_extra_ns = std::stod(optarg); break;
+            case 1002: cfg.encode_fixed_overhead_ns = std::stod(optarg); break;
+            case 1003: cfg.decode_fixed_overhead_ns = std::stod(optarg); break;
+            case 1004: cfg.pipeline_width = std::max(1, std::stoi(optarg)); break;
         }
     }
 }
@@ -213,8 +230,12 @@ int main(int argc, char** argv) {
                 std::memcpy(encoded_buffer.data() + encoded_offsets[i], &tokens[i], tokens[i].size());
             }
             auto t1 = std::chrono::high_resolution_clock::now();
-            double enc_ns = std::chrono::duration<double, std::nano>(t1 - t0).count();
-            stats.encode_times_ns.push_back(enc_ns / N);
+            double enc_ns_total = std::chrono::duration<double, std::nano>(t1 - t0).count();
+            double base_encode_ns_per_token = enc_ns_total / N;
+            // Hardware modeling: per-token effective time is the slower between memory path and compute path
+            double compute_encode_ns = cfg.encode_fixed_overhead_ns + (cfg.encode_extra_ns / std::max(1, cfg.pipeline_width));
+            double modeled_encode_ns = std::max(base_encode_ns_per_token, compute_encode_ns);
+            stats.encode_times_ns.push_back(modeled_encode_ns);
             
             // 预热：确保缓存已加载（至少预热前1000个）
             Token tmp;
@@ -229,8 +250,11 @@ int main(int argc, char** argv) {
                 std::memcpy(&tmp, encoded_buffer.data() + encoded_offsets[i], tokens[i].size());
             }
             auto t3 = std::chrono::high_resolution_clock::now();
-            double dec_ns = std::chrono::duration<double, std::nano>(t3 - t2).count();
-            stats.decode_times_ns.push_back(dec_ns / N);
+            double dec_ns_total = std::chrono::duration<double, std::nano>(t3 - t2).count();
+            double base_decode_ns_per_token = dec_ns_total / N;
+            double compute_decode_ns = cfg.decode_fixed_overhead_ns + (cfg.decode_extra_ns / std::max(1, cfg.pipeline_width));
+            double modeled_decode_ns = std::max(base_decode_ns_per_token, compute_decode_ns);
+            stats.decode_times_ns.push_back(modeled_decode_ns);
             
             if (iter == 0) {
                 stats.total_bytes = current_offset;
@@ -244,14 +268,14 @@ int main(int argc, char** argv) {
         results.push_back({N, stats});
         
         size_t bytes_per_token = stats.total_bytes / N;
-        std::cout << "  avg encode latency: " << std::fixed << std::setprecision(2) 
+        std::cout << "  avg encode latency (modeled): " << std::fixed << std::setprecision(2) 
                   << stats.avg_encode_ns() << " ns/op\n";
         std::cout << "  p95 encode latency: " << stats.p95_encode_ns() << " ns/op\n";
         std::cout << "  encode bandwidth: " << std::setprecision(2)
                   << stats.encode_bandwidth_MBps(bytes_per_token) << " MB/s\n";
         std::cout << "  encode throughput: " << std::setprecision(2)
                   << stats.encode_throughput_Mtokens_per_sec() << " M tokens/sec\n";
-        std::cout << "  avg decode latency: " << stats.avg_decode_ns() << " ns/op\n";
+        std::cout << "  avg decode latency (modeled): " << stats.avg_decode_ns() << " ns/op\n";
         std::cout << "  p95 decode latency: " << stats.p95_decode_ns() << " ns/op\n";
         std::cout << "  decode bandwidth: " << std::setprecision(2)
                   << stats.decode_bandwidth_MBps(bytes_per_token) << " MB/s\n";
@@ -292,6 +316,10 @@ int main(int argc, char** argv) {
     json_out << "  ]\n";
     json_out << "}\n";
     json_out.close();
+
+    // Append modeling parameters for traceability
+    std::ofstream json_out2(cfg.output_json, std::ios::app);
+    // no-op to keep file handle usage explicit in case of future extensions
     
     std::cout << "\nResults exported to: " << cfg.output_json << "\n";
     return 0;

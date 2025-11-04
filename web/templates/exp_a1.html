@@ -77,7 +77,7 @@
     <div class="col-md-6">
       <h5>Encode/Decode延迟分布（近似CDF）</h5>
       <p class="text-muted small mb-2">CDF (累积分布函数) 表示延迟小于等于X值的概率。延迟单位为纳秒（ns），用于评估NIC硬件序列化单元的延迟要求。由于数据限制，这里显示的是不同N值下的延迟分布近似。</p>
-      <div id="latencyCdfChart" style="height:300px"></div>
+      <div id="latencyCdfChart" style="height:260px; width:420px; margin:0 auto"></div>
     </div>
     <div class="col-md-6">
       <h5>吞吐量与带宽</h5>
@@ -359,7 +359,9 @@ function updateCharts(data) {
         y: cdf.map(p => p.y),
         type: 'scatter',
         mode: 'lines+markers',
-        name: label
+        name: label,
+        line: { width: 1 },
+        marker: { size: 4 }
       };
     }
     
@@ -370,85 +372,65 @@ function updateCharts(data) {
       createApproxCDF(data.results.map(r => r.p95_decode_latency_ns), 'Decode (p95)')
     ];
     Plotly.newPlot('latencyCdfChart', latencyData, {
-      title: 'Encode/Decode Latency Distribution (近似CDF)',
-      xaxis: { title: 'Latency (纳秒)' },
-      yaxis: { title: '累积概率 (CDF)', range: [0, 1] }
+      title: { text: 'Latency CDF (ns)', font: { size: 12 } },
+      height: 260,
+      width: 420,
+      autosize: false,
+      margin: { l: 50, r: 10, t: 28, b: 36 },
+      xaxis: {
+        title: { text: 'Latency (ns)', font: { size: 11 } },
+        tickfont: { size: 10 },
+        nticks: 5,
+        showgrid: false,
+        ticks: 'outside',
+        ticklen: 4,
+        tickcolor: '#888'
+      },
+      yaxis: {
+        title: { text: 'CDF', font: { size: 11 } },
+        tickfont: { size: 10 },
+        range: [0, 1],
+        nticks: 4,
+        showgrid: false,
+        ticks: 'outside',
+        ticklen: 4,
+        tickcolor: '#888'
+      },
+      legend: { orientation: 'v', x: 1.02, y: 1, xanchor: 'left', yanchor: 'top', font: { size: 10 } },
+      hovermode: 'x unified'
     });
 
-    // Throughput and Bandwidth
-    // 检查数据格式，兼容新旧格式
-    const hasNewFormat = data.results.length > 0 && data.results[0].encode_throughput_Mtokens_per_sec !== undefined;
-    
+    // Throughput（兼容新旧字段）
+    const hasNewTP = data.results.length > 0 && (data.results[0].encode_throughput_Mtokens_per_sec !== undefined);
+    const encTP = hasNewTP
+      ? data.results.map(r => r.encode_throughput_Mtokens_per_sec)
+      : data.results.map(r => (r.throughput_encode_tokens_per_sec || 0) / 1e6);
+    const decTP = hasNewTP
+      ? data.results.map(r => r.decode_throughput_Mtokens_per_sec)
+      : data.results.map(r => (r.throughput_decode_tokens_per_sec || 0) / 1e6);
+
     const throughputData = [{
       x: data.results.map(r => r.N),
-      y: hasNewFormat 
-        ? data.results.map(r => r.encode_throughput_Mtokens_per_sec)
-        : data.results.map(r => (r.throughput_encode_tokens_per_sec || 0) / 1e6),
+      y: encTP,
       type: 'scatter',
       mode: 'lines+markers',
       name: 'Encode Throughput',
       line: { color: 'rgb(255, 99, 132)' },
-      marker: { size: 8 },
-      yaxis: 'y'
+      marker: { size: 8 }
     }, {
       x: data.results.map(r => r.N),
-      y: hasNewFormat
-        ? data.results.map(r => r.decode_throughput_Mtokens_per_sec)
-        : data.results.map(r => (r.throughput_decode_tokens_per_sec || 0) / 1e6),
+      y: decTP,
       type: 'scatter',
       mode: 'lines+markers',
       name: 'Decode Throughput',
       line: { color: 'rgb(54, 162, 235)' },
-      marker: { size: 8 },
-      yaxis: 'y'
+      marker: { size: 8 }
     }];
-    
-    // 如果有带宽数据，添加带宽曲线
-    if (hasNewFormat && data.results[0].encode_bandwidth_MBps !== undefined) {
-      throughputData.push({
-        x: data.results.map(r => r.N),
-        y: data.results.map(r => r.encode_bandwidth_MBps),
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: 'Encode Bandwidth',
-        line: { color: 'rgb(255, 99, 132)', dash: 'dash' },
-        marker: { size: 8 },
-        yaxis: 'y2'
-      });
-      throughputData.push({
-        x: data.results.map(r => r.N),
-        y: data.results.map(r => r.decode_bandwidth_MBps),
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: 'Decode Bandwidth',
-        line: { color: 'rgb(54, 162, 235)', dash: 'dash' },
-        marker: { size: 8 },
-        yaxis: 'y2'
-      });
-    }
-    
-    const layout = {
-      title: hasNewFormat 
-        ? 'Throughput & Bandwidth vs N (NIC硬件序列化性能评估)'
-        : 'Throughput vs N (受CPU缓存层次影响)',
+    Plotly.newPlot('throughputChart', throughputData, {
+      title: hasNewTP ? 'Throughput vs N' : 'Throughput vs N',
       xaxis: { title: 'N (log scale)', type: 'log' },
-      yaxis: { 
-        title: hasNewFormat ? 'Throughput (M tokens/sec)' : 'Tokens/sec', 
-        type: 'log',
-        side: 'left'
-      }
-    };
-    
-    if (hasNewFormat && data.results[0].encode_bandwidth_MBps !== undefined) {
-      layout.yaxis2 = {
-        title: 'Bandwidth (MB/s)',
-        type: 'log',
-        overlaying: 'y',
-        side: 'right'
-      };
-    }
-    
-    Plotly.newPlot('throughputChart', throughputData, layout);
+      yaxis: { title: hasNewTP ? 'Throughput (M tokens/sec)' : 'Throughput (M tokens/sec)', type: 'log' }
+    });
 
     console.log('Charts updated successfully');
   } catch (err) {

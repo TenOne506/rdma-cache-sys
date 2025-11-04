@@ -10,6 +10,7 @@ import threading
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 import pandas as pd
+import glob
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'rdma-cache-secret-key-change-in-production'
@@ -47,6 +48,36 @@ def load_user(user_id):
 @login_required
 def index():
     return render_template('index.html')
+
+# ========== Migration stats (latest) ==========
+@app.route('/api/migration/latest')
+@login_required
+def api_migration_latest():
+    try:
+        # 寻找 results 目录下最新的 JSON 结果（rdma_cache_sim 导出的）
+        exp_dir = app.config['EXP_FOLDER']
+        files = sorted(glob.glob(os.path.join(exp_dir, '*.json')), key=os.path.getmtime, reverse=True)
+        if not files:
+            return jsonify({'error': 'no result files'}), 404
+        # 逐个查找含有迁移字段的结果
+        fields = ['promote_l3_to_l2', 'promote_l2_to_l1', 'demote_l1_to_l2', 'demote_l2_to_l3']
+        for fp in files:
+            try:
+                with open(fp, 'r') as f:
+                    data = json.load(f)
+                if all(k in data for k in fields):
+                    return jsonify({
+                        'file': os.path.basename(fp),
+                        'promote_l3_to_l2': data.get('promote_l3_to_l2', 0),
+                        'promote_l2_to_l1': data.get('promote_l2_to_l1', 0),
+                        'demote_l1_to_l2': data.get('demote_l1_to_l2', 0),
+                        'demote_l2_to_l3': data.get('demote_l2_to_l3', 0)
+                    })
+            except Exception:
+                continue
+        return jsonify({'error': 'no migration stats found in results'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # 拓扑图页面与数据接口
 @app.route('/topology')

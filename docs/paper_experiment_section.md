@@ -78,6 +78,35 @@
 
 5. **硬件对应性**：测量操作直接对应NIC硬件序列化单元的核心功能，实验结果可以指导硬件设计中的吞吐量目标、缓存大小和流水线深度等关键参数。
 
+### 硬件化序列单元建模（本研究的评估核心）
+
+为更贴近“硬件化序列单元”的真实表现，我们在纯内存带宽模型（memcpy）之上引入可参数化的硬件成本模型，显式区分 encode 与 decode 的不对称，并刻画流水线并行度：
+
+- 记 `base_memcpy_ns/Token` 为实测的每Token内存搬运时间（来自 memcpy 试验）
+- 记 `compute_encode_ns = encode_fixed_overhead_ns + encode_extra_ns / pipeline_width`
+- 记 `compute_decode_ns = decode_fixed_overhead_ns + decode_extra_ns / pipeline_width`
+
+则建模后的单位Token延迟（取“内存路径”与“计算路径”中的慢者）为：
+
+\[\text{modeled\_encode\_ns} = \max(\text{base\_memcpy\_ns},\ \text{compute\_encode\_ns})\]
+\[\text{modeled\_decode\_ns} = \max(\text{base\_memcpy\_ns},\ \text{compute\_decode\_ns})\]
+
+并据此计算带宽与吞吐量：
+
+\[\text{bandwidth\_MBps} = \frac{\text{bytes\_per\_token} \times 10^9}{\text{modeled\_ns} \times 1024^2}\]\
+\[\text{throughput\_Mtokens/s} = \frac{10^9}{\text{modeled\_ns} \times 10^6}\]
+
+建模参数（命令行可配置）：
+- `--encode_extra_ns`：编码额外计算时间（ns/Token），用于模拟字段打包、端序转换、掩码/压缩等
+- `--decode_extra_ns`：解码额外计算时间（ns/Token），用于模拟解包与可选校验
+- `--encode_fixed_overhead_ns` / `--decode_fixed_overhead_ns`：固定开销（ns/Token），用于模拟每Token的恒定门控/调度成本
+- `--pipeline_width`：流水线并行宽度（≥1），用于模拟硬件的并行 lanes；越大代表 compute 成本可被更多并行度摊薄
+
+说明：
+- 该模型使 encode/​decode 曲线可自然分离，体现硬件非对称；
+- 当 compute 成本较小或并行度足够大时，性能受限于内存通路（memcpy 上限）；
+- 当 compute 成本主导时，性能受限于硬件算力与流水线宽度。
+
 ## 4.4 实验实施
 
 ### 编译与构建
@@ -113,9 +142,24 @@ make exp_a1_compress
     --output=results.json
 ```
 
+硬件化序列单元建模示例（非对称+流水线）：
+
+```bash
+./exp_a1_compress \
+  --type=QP \
+  --N_values=10000 \
+  --iters=5 \
+  --encode_extra_ns=3 \
+  --decode_extra_ns=1 \
+  --encode_fixed_overhead_ns=0.5 \
+  --decode_fixed_overhead_ns=0.2 \
+  --pipeline_width=2 \
+  --output=results_hw.json
+```
+
 ### 结果记录
 
-实验结果以JSON格式保存，包含完整的实验配置和性能指标。每个结果包含：Token类型、数据规模、重复次数、延迟统计（平均值和95th分位数，单位：纳秒）、带宽指标（单位：MB/s）、吞吐量（单位：M tokens/sec）、压缩比和字节数统计。
+实验结果以JSON格式保存，包含完整的实验配置和性能指标。每个结果包含：Token类型、数据规模、重复次数、延迟统计（平均值和95th分位数，单位：纳秒）、带宽指标（单位：MB/s）、吞吐量（单位：M tokens/sec）、压缩比和字节数统计。建模参数通过命令行配置参与计算，其取值与结果强相关，应与结果文件一并记录（如实验脚本中同时保存所用参数）。
 
 **性能指标示例：**
 - 延迟：1.37 ns/op（编码）、1.43 ns/op（解码）
