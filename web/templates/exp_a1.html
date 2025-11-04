@@ -1,0 +1,468 @@
+{% extends "base.html" %}
+
+{% block title %}A1实验：压缩比与序列化开销 - RDMA Cache System{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="main-content">
+  <h2 class="mb-4">A1实验：压缩比与序列化开销</h2>
+  <p class="text-muted">验证各类token的真实字节大小、压缩比，以及序列化/反序列化（encode/decode）开销</p>
+
+  <form id="expForm" class="row g-3 mb-4">
+    <div class="col-md-3">
+      <label class="form-label">Token类型</label>
+      <select class="form-select" name="type">
+        <option value="PD">PD</option>
+        <option value="MR">MR</option>
+        <option value="CQ">CQ</option>
+        <option value="QP" selected>QP</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">N值（逗号分隔，如：1000,10000,100000,1000000）</label>
+      <input type="text" class="form-control" name="N_values" value="1000,10000,100000,1000000" placeholder="1000,10000,100000,1000000">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">iters（重复次数）</label>
+      <input type="number" class="form-control" name="iters" value="10" min="1" max="100">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">字段分布</label>
+      <select class="form-select" name="random_fields">
+        <option value="true" selected>随机分布</option>
+        <option value="false">典型分布</option>
+      </select>
+    </div>
+    <div class="col-12">
+      <button type="submit" class="btn btn-primary" id="runBtn">运行A1实验</button>
+      <span id="status" class="ms-3 text-info" style="display:none">正在运行...</span>
+    </div>
+  </form>
+
+  <hr>
+
+  <div class="row">
+    <div class="col-md-6">
+      <h5>结果文件 <button class="btn btn-sm btn-secondary" onclick="loadExpFiles()">刷新</button></h5>
+      <div id="filesStatus" class="text-muted small mb-2"></div>
+      <ul id="expFiles" class="list-group"></ul>
+    </div>
+    <div class="col-md-6">
+      <h5>当前结果摘要</h5>
+      <div id="summaryStatus" class="text-muted small mb-2"></div>
+      <pre id="resultSummary" style="height:200px;overflow:auto;background:#f7f7f7;padding:10px"></pre>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="row mt-4">
+    <div class="col-md-6">
+      <h5>Token类型 vs 平均大小（Bar Chart）</h5>
+      <div style="height:300px; position:relative;">
+        <canvas id="sizeChart"></canvas>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <h5>压缩比随N值变化</h5>
+      <div id="compressionRatioChart" style="height:300px"></div>
+    </div>
+  </div>
+
+  <div class="row mt-4">
+    <div class="col-md-6">
+      <h5>Encode/Decode延迟分布（近似CDF）</h5>
+      <p class="text-muted small mb-2">CDF (累积分布函数) 表示延迟小于等于X值的概率。延迟单位为纳秒（ns），用于评估NIC硬件序列化单元的延迟要求。由于数据限制，这里显示的是不同N值下的延迟分布近似。</p>
+      <div id="latencyCdfChart" style="height:300px"></div>
+    </div>
+    <div class="col-md-6">
+      <h5>吞吐量与带宽</h5>
+      <p class="text-muted small mb-2">
+        <strong>说明：</strong>延迟单位为纳秒（ns），带宽单位为MB/s，吞吐量单位为M tokens/sec。这些指标用于评估NIC硬件序列化单元的性能需求。实线表示吞吐量（左Y轴），虚线表示带宽（右Y轴）。
+      </p>
+      <div id="throughputChart" style="height:300px"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let sizeChart = null;
+let currentData = null;
+
+
+document.getElementById('expForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const formData = new FormData(e.target);
+  const btn = document.getElementById('runBtn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  status.style.display = 'inline';
+  status.textContent = '正在启动实验...';
+
+  fetch('/api/exp_a1/run', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => {
+      if (data.status === 'started') {
+        status.textContent = '实验已启动，等待完成...';
+        // 轮询检查实验是否完成
+        let checkCount = 0;
+        const maxChecks = 120; // 最多检查2分钟（每1秒检查一次）
+        let lastFileCount = 0;
+        const checkInterval = setInterval(() => {
+          checkCount++;
+          fetch('/api/exp_a1/files')
+            .then(r => r.json())
+            .then(files => {
+              // 检查是否有新文件生成
+              if (files.length > lastFileCount || checkCount >= 10) {
+                clearInterval(checkInterval);
+                loadExpFiles();
+                status.textContent = '实验完成！';
+                setTimeout(() => {
+                  status.style.display = 'none';
+                }, 2000);
+                btn.disabled = false;
+              }
+              lastFileCount = files.length;
+              if (checkCount >= maxChecks) {
+                clearInterval(checkInterval);
+                status.textContent = '等待超时，请手动刷新文件列表';
+                btn.disabled = false;
+              }
+            })
+            .catch(err => {
+              console.error('Check error:', err);
+            });
+        }, 1000);
+      }
+    })
+    .catch(err => {
+      console.error('Submit error:', err);
+      alert('Error: ' + err);
+      btn.disabled = false;
+      status.style.display = 'none';
+    });
+});
+
+function loadExpFiles() {
+  console.log('Loading exp_a1 files...');
+  const statusEl = document.getElementById('filesStatus');
+  statusEl.textContent = '正在加载文件列表...';
+  fetch('/api/exp_a1/files')
+    .then(r => {
+      console.log('Response status:', r.status, r.statusText);
+      if (!r.ok) {
+        return r.json().then(err => {
+          throw new Error(err.error || `HTTP ${r.status}: ${r.statusText}`);
+        });
+      }
+      return r.json();
+    })
+    .then(data => {
+      console.log('Received files data:', data);
+      const ul = document.getElementById('expFiles');
+      const statusEl = document.getElementById('filesStatus');
+      ul.innerHTML = '';
+      if (Array.isArray(data) && data.length === 0) {
+        statusEl.textContent = '找到 0 个文件';
+        ul.innerHTML = '<li class="list-group-item">暂无结果文件</li>';
+        return;
+      }
+      if (!Array.isArray(data)) {
+        console.error('Invalid response format:', data);
+        statusEl.textContent = '响应格式错误';
+        ul.innerHTML = '<li class="list-group-item text-danger">响应格式错误: ' + JSON.stringify(data) + '</li>';
+        return;
+      }
+      statusEl.textContent = `找到 ${data.length} 个文件`;
+      data.forEach(f => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item';
+        li.innerHTML = `<a href="#" onclick="loadResult('${f.filename}'); return false;">${f.filename}</a> <small class="text-muted">${f.time}</small>`;
+        ul.appendChild(li);
+      });
+      // 自动加载最新的文件
+      if (data.length > 0) {
+        console.log('Auto-loading latest file:', data[0].filename);
+        loadResult(data[0].filename);
+      }
+    })
+    .catch(err => {
+      console.error('Load files error:', err);
+      const ul = document.getElementById('expFiles');
+      const statusEl = document.getElementById('filesStatus');
+      statusEl.textContent = '加载失败';
+      ul.innerHTML = '<li class="list-group-item text-danger">加载文件列表失败: ' + err.message + '</li>';
+    });
+}
+
+function loadResult(filename) {
+  console.log('Loading result:', filename);
+  const url = `/api/exp_a1/result?file=${encodeURIComponent(filename)}`;
+  console.log('Fetching URL:', url);
+  const statusEl = document.getElementById('summaryStatus');
+  statusEl.textContent = '正在加载结果...';
+  fetch(url)
+    .then(r => {
+      console.log('Result response status:', r.status, r.statusText);
+      if (!r.ok) {
+        return r.json().then(err => {
+          throw new Error(err.error || `HTTP ${r.status}: ${r.statusText}`);
+        });
+      }
+      return r.json();
+    })
+    .then(data => {
+      console.log('Loaded data:', data);
+      const statusEl = document.getElementById('summaryStatus');
+      if (data.error) {
+        console.error('Data contains error:', data.error);
+        statusEl.textContent = '加载失败';
+        document.getElementById('resultSummary').textContent = 'Error: ' + data.error;
+        return;
+      }
+      statusEl.textContent = '加载成功';
+      currentData = data;
+      displaySummary(data);
+      updateCharts(data);
+    })
+    .catch(err => {
+      console.error('Load result error:', err);
+      const statusEl = document.getElementById('summaryStatus');
+      statusEl.textContent = '加载失败';
+      document.getElementById('resultSummary').textContent = 'Error loading result: ' + err.message;
+    });
+}
+
+function displaySummary(data) {
+  const pre = document.getElementById('resultSummary');
+  if (data.error) {
+    pre.textContent = 'Error: ' + data.error;
+    return;
+  }
+  if (!data.results || data.results.length === 0) {
+    pre.textContent = 'No results data';
+    return;
+  }
+  let text = `Type: ${data.type}\n`;
+  text += `Iterations: ${data.iters}\n`;
+  text += `Random Fields: ${data.random_fields}\n\n`;
+  text += `Results:\n`;
+  data.results.forEach(r => {
+    text += `N=${r.N}:\n`;
+    text += `  Encode: latency=${r.avg_encode_latency_ns.toFixed(2)}ns, `;
+    text += `bandwidth=${r.encode_bandwidth_MBps.toFixed(2)}MB/s, `;
+    text += `throughput=${r.encode_throughput_Mtokens_per_sec.toFixed(2)}M tokens/s\n`;
+    text += `  Decode: latency=${r.avg_decode_latency_ns.toFixed(2)}ns, `;
+    text += `bandwidth=${r.decode_bandwidth_MBps.toFixed(2)}MB/s, `;
+    text += `throughput=${r.decode_throughput_Mtokens_per_sec.toFixed(2)}M tokens/s\n`;
+    text += `  bytes/token=${r.bytes_per_token}, ratio=${r.compression_ratio.toFixed(4)}\n\n`;
+  });
+  pre.textContent = text;
+}
+
+function updateCharts(data) {
+  console.log('Updating charts with data:', data);
+  if (data.error || !data.results || data.results.length === 0) {
+    console.warn('No valid data for charts');
+    return;
+  }
+
+  try {
+    // Bar Chart: Token type vs avg size
+    const ctx = document.getElementById('sizeChart');
+    if (!ctx) {
+      console.error('sizeChart canvas not found');
+      return;
+    }
+    if (sizeChart) sizeChart.destroy();
+    sizeChart = new Chart(ctx.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: data.results.map(r => `N=${r.N}`),
+        datasets: [{
+          label: `${data.type} - Bytes per Token`,
+          data: data.results.map(r => r.bytes_per_token),
+          backgroundColor: 'rgba(54, 162, 235, 0.6)',
+          borderColor: 'rgba(54, 162, 235, 1)',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top'
+          },
+          tooltip: {
+            enabled: true
+          }
+        },
+        scales: {
+          y: { 
+            beginAtZero: true, 
+            title: { 
+              display: true, 
+              text: 'Bytes per Token' 
+            },
+            ticks: {
+              stepSize: 1
+            }
+          },
+          x: {
+            title: {
+              display: true,
+              text: 'N (Number of Tokens)'
+            }
+          }
+        }
+      }
+    });
+
+    // Compression Ratio vs N
+    const ratioData = [{
+      x: data.results.map(r => r.N),
+      y: data.results.map(r => r.compression_ratio),
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: 'Compression Ratio'
+    }];
+    Plotly.newPlot('compressionRatioChart', ratioData, {
+      title: 'Compression Ratio vs N',
+      xaxis: { title: 'N (log scale)', type: 'log' },
+      yaxis: { title: 'Ratio' }
+    });
+
+    // Latency Distribution (近似CDF)
+    // 注意：由于我们只有每个N值的avg和p95，无法构建真正的CDF
+    // 这里显示的是不同N值下的延迟分布，按延迟值排序后近似CDF
+    // 为了更准确，我们创建多个数据点来近似CDF曲线
+    function createApproxCDF(values, label) {
+      // 对值进行排序
+      const sorted = [...values].sort((a, b) => a - b);
+      // 创建CDF：对于每个值，计算有多少比例的观察值小于等于它
+      const cdf = [];
+      for (let i = 0; i < sorted.length; i++) {
+        cdf.push({
+          x: sorted[i],
+          y: (i + 1) / sorted.length
+        });
+      }
+      return {
+        x: cdf.map(p => p.x),
+        y: cdf.map(p => p.y),
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: label
+      };
+    }
+    
+    const latencyData = [
+      createApproxCDF(data.results.map(r => r.avg_encode_latency_ns), 'Encode (avg)'),
+      createApproxCDF(data.results.map(r => r.p95_encode_latency_ns), 'Encode (p95)'),
+      createApproxCDF(data.results.map(r => r.avg_decode_latency_ns), 'Decode (avg)'),
+      createApproxCDF(data.results.map(r => r.p95_decode_latency_ns), 'Decode (p95)')
+    ];
+    Plotly.newPlot('latencyCdfChart', latencyData, {
+      title: 'Encode/Decode Latency Distribution (近似CDF)',
+      xaxis: { title: 'Latency (纳秒)' },
+      yaxis: { title: '累积概率 (CDF)', range: [0, 1] }
+    });
+
+    // Throughput and Bandwidth
+    // 检查数据格式，兼容新旧格式
+    const hasNewFormat = data.results.length > 0 && data.results[0].encode_throughput_Mtokens_per_sec !== undefined;
+    
+    const throughputData = [{
+      x: data.results.map(r => r.N),
+      y: hasNewFormat 
+        ? data.results.map(r => r.encode_throughput_Mtokens_per_sec)
+        : data.results.map(r => (r.throughput_encode_tokens_per_sec || 0) / 1e6),
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: 'Encode Throughput',
+      line: { color: 'rgb(255, 99, 132)' },
+      marker: { size: 8 },
+      yaxis: 'y'
+    }, {
+      x: data.results.map(r => r.N),
+      y: hasNewFormat
+        ? data.results.map(r => r.decode_throughput_Mtokens_per_sec)
+        : data.results.map(r => (r.throughput_decode_tokens_per_sec || 0) / 1e6),
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: 'Decode Throughput',
+      line: { color: 'rgb(54, 162, 235)' },
+      marker: { size: 8 },
+      yaxis: 'y'
+    }];
+    
+    // 如果有带宽数据，添加带宽曲线
+    if (hasNewFormat && data.results[0].encode_bandwidth_MBps !== undefined) {
+      throughputData.push({
+        x: data.results.map(r => r.N),
+        y: data.results.map(r => r.encode_bandwidth_MBps),
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'Encode Bandwidth',
+        line: { color: 'rgb(255, 99, 132)', dash: 'dash' },
+        marker: { size: 8 },
+        yaxis: 'y2'
+      });
+      throughputData.push({
+        x: data.results.map(r => r.N),
+        y: data.results.map(r => r.decode_bandwidth_MBps),
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'Decode Bandwidth',
+        line: { color: 'rgb(54, 162, 235)', dash: 'dash' },
+        marker: { size: 8 },
+        yaxis: 'y2'
+      });
+    }
+    
+    const layout = {
+      title: hasNewFormat 
+        ? 'Throughput & Bandwidth vs N (NIC硬件序列化性能评估)'
+        : 'Throughput vs N (受CPU缓存层次影响)',
+      xaxis: { title: 'N (log scale)', type: 'log' },
+      yaxis: { 
+        title: hasNewFormat ? 'Throughput (M tokens/sec)' : 'Tokens/sec', 
+        type: 'log',
+        side: 'left'
+      }
+    };
+    
+    if (hasNewFormat && data.results[0].encode_bandwidth_MBps !== undefined) {
+      layout.yaxis2 = {
+        title: 'Bandwidth (MB/s)',
+        type: 'log',
+        overlaying: 'y',
+        side: 'right'
+      };
+    }
+    
+    Plotly.newPlot('throughputChart', throughputData, layout);
+
+    console.log('Charts updated successfully');
+  } catch (err) {
+    console.error('Error updating charts:', err);
+    alert('图表更新失败: ' + err.message);
+  }
+}
+
+// 页面加载时自动加载文件列表
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', loadExpFiles);
+} else {
+  loadExpFiles();
+}
+</script>
+{% endblock %}
+

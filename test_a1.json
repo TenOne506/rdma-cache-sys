@@ -1,0 +1,31 @@
+{
+  "type": "QP",
+  "iters": 3,
+  "random_fields": true,
+  "results": [
+    {
+      "N": 1000,
+      "avg_encode_us": 0.034352,
+      "p95_encode_us": 0.049836,
+      "avg_decode_us": 0.002095,
+      "p95_decode_us": 0.002209,
+      "total_bytes": 14000,
+      "bytes_per_token": 14,
+      "compression_ratio": 1.571429,
+      "throughput_encode_tokens_per_sec": 29110669.060211,
+      "throughput_decode_tokens_per_sec": 477402928.071292
+    },
+    {
+      "N": 10000,
+      "avg_encode_us": 0.028729,
+      "p95_encode_us": 0.035308,
+      "avg_decode_us": 0.008451,
+      "p95_decode_us": 0.021477,
+      "total_bytes": 140000,
+      "bytes_per_token": 14,
+      "compression_ratio": 1.571429,
+      "throughput_encode_tokens_per_sec": 34808276.015705,
+      "throughput_decode_tokens_per_sec": 118322658.000189
+    }
+  ]
+}

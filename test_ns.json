@@ -1,0 +1,35 @@
+{
+  "type": "QP",
+  "iters": 3,
+  "random_fields": true,
+  "results": [
+    {
+      "N": 1000,
+      "avg_encode_latency_ns": 1.371667,
+      "p95_encode_latency_ns": 1.534000,
+      "encode_bandwidth_MBps": 9733.735429,
+      "encode_throughput_Mtokens_per_sec": 729.040097,
+      "avg_decode_latency_ns": 1.431333,
+      "p95_decode_latency_ns": 1.476000,
+      "decode_bandwidth_MBps": 9327.974217,
+      "decode_throughput_Mtokens_per_sec": 698.649278,
+      "total_bytes": 14000,
+      "bytes_per_token": 14,
+      "compression_ratio": 1.571429
+    },
+    {
+      "N": 10000,
+      "avg_encode_latency_ns": 1.760533,
+      "p95_encode_latency_ns": 2.718500,
+      "encode_bandwidth_MBps": 7583.747593,
+      "encode_throughput_Mtokens_per_sec": 568.009694,
+      "avg_decode_latency_ns": 1.614167,
+      "p95_decode_latency_ns": 2.069300,
+      "decode_bandwidth_MBps": 8271.413792,
+      "decode_throughput_Mtokens_per_sec": 619.514713,
+      "total_bytes": 140000,
+      "bytes_per_token": 14,
+      "compression_ratio": 1.571429
+    }
+  ]
+}

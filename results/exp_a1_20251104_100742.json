@@ -1,0 +1,55 @@
+{
+  "type": "QP",
+  "iters": 10,
+  "random_fields": true,
+  "results": [
+    {
+      "N": 1000,
+      "avg_encode_us": 0.018894,
+      "p95_encode_us": 0.039951,
+      "avg_decode_us": 0.001093,
+      "p95_decode_us": 0.001496,
+      "total_bytes": 14000,
+      "bytes_per_token": 14,
+      "compression_ratio": 1.571429,
+      "throughput_encode_tokens_per_sec": 52927135.212952,
+      "throughput_decode_tokens_per_sec": 914829384.319824
+    },
+    {
+      "N": 10000,
+      "avg_encode_us": 0.019627,
+      "p95_encode_us": 0.024338,
+      "avg_decode_us": 0.001498,
+      "p95_decode_us": 0.003160,
+      "total_bytes": 140000,
+      "bytes_per_token": 14,
+      "compression_ratio": 1.571429,
+      "throughput_encode_tokens_per_sec": 50949936.083305,
+      "throughput_decode_tokens_per_sec": 667503270.766027
+    },
+    {
+      "N": 100000,
+      "avg_encode_us": 0.019836,
+      "p95_encode_us": 0.039463,
+      "avg_decode_us": 0.003265,
+      "p95_decode_us": 0.006732,
+      "total_bytes": 1400000,
+      "bytes_per_token": 14,
+      "compression_ratio": 1.571429,
+      "throughput_encode_tokens_per_sec": 50412657.852114,
+      "throughput_decode_tokens_per_sec": 306285092.614486
+    },
+    {
+      "N": 1000000,
+      "avg_encode_us": 0.019240,
+      "p95_encode_us": 0.033134,
+      "avg_decode_us": 0.005187,
+      "p95_decode_us": 0.008936,
+      "total_bytes": 14000000,
+      "bytes_per_token": 14,
+      "compression_ratio": 1.571429,
+      "throughput_encode_tokens_per_sec": 51976230.625230,
+      "throughput_decode_tokens_per_sec": 192797334.507443
+    }
+  ]
+}

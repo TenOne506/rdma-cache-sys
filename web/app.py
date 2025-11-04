@@ -13,9 +13,11 @@ import pandas as pd
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'rdma-cache-secret-key-change-in-production'
-app.config['UPLOAD_FOLDER'] = 'results'
-app.config['LOG_FOLDER'] = 'logs'
-app.config['EXP_FOLDER'] = 'results'  # CSV/JSON 统一放这里
+# 获取项目根目录
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+app.config['UPLOAD_FOLDER'] = os.path.join(BASE_DIR, 'results')
+app.config['LOG_FOLDER'] = os.path.join(BASE_DIR, 'logs')
+app.config['EXP_FOLDER'] = os.path.join(BASE_DIR, 'results')  # CSV/JSON 统一放这里
 
 # Flask-Login配置
 login_manager = LoginManager()
@@ -163,6 +165,87 @@ def api_compress_result():
     with open(fp, 'r') as f:
         data = json.load(f)
     return jsonify(data)
+
+# ========== A1 实验：压缩比与序列化开销 ==========
+@app.route('/exp_a1')
+@login_required
+def exp_a1():
+    return render_template('exp_a1.html')
+
+@app.route('/api/exp_a1/run', methods=['POST'])
+@login_required
+def api_exp_a1_run():
+    ctype = request.form.get('type', 'QP')
+    N_str = request.form.get('N_values', '1000,10000,100000,1000000')
+    N_values = [int(x.strip()) for x in N_str.split(',') if x.strip()]
+    iters = int(request.form.get('iters', 10))
+    random_fields = request.form.get('random_fields', 'true') == 'true'
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    out_file = os.path.join(app.config['EXP_FOLDER'], f'exp_a1_{timestamp}.json')
+
+    def run_exp():
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        exe = os.path.join(base_dir, 'build', 'exp_a1_compress')
+        cmd = [exe, '--type', ctype, '--iters', str(iters), '--output', out_file, '--N_values', N_str]
+        if not random_fields:
+            cmd.append('--typical')
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=base_dir)
+            if result.returncode != 0:
+                with open(out_file, 'w') as f:
+                    json.dump({'error': f'execution failed: {result.stderr}'}, f)
+        except Exception as e:
+            with open(out_file, 'w') as f:
+                json.dump({'error': str(e)}, f)
+
+    t = threading.Thread(target=run_exp)
+    t.daemon = True
+    t.start()
+    return jsonify({'status': 'started', 'file': out_file})
+
+@app.route('/api/exp_a1/files')
+@login_required
+def api_exp_a1_files():
+    files = []
+    exp_folder = app.config['EXP_FOLDER']
+    try:
+        if not os.path.exists(exp_folder):
+            app.logger.warning(f'EXP_FOLDER does not exist: {exp_folder}')
+            return jsonify({'error': f'Folder not found: {exp_folder}'}), 500
+        for f in os.listdir(exp_folder):
+            if f.startswith('exp_a1_') and f.endswith('.json'):
+                fp = os.path.join(exp_folder, f)
+                if os.path.isfile(fp):
+                    files.append({'filename': f, 'time': datetime.fromtimestamp(os.path.getmtime(fp)).strftime('%Y-%m-%d %H:%M:%S')})
+        files.sort(key=lambda x: x['time'], reverse=True)
+    except Exception as e:
+        app.logger.error(f'Error listing exp_a1 files: {e}')
+        return jsonify({'error': str(e)}), 500
+    return jsonify(files)
+
+@app.route('/api/exp_a1/result')
+@login_required
+def api_exp_a1_result():
+    filename = request.args.get('file')
+    if not filename:
+        return jsonify({'error': 'file required'}), 400
+    # 防止路径遍历攻击
+    if '..' in filename or '/' in filename or '\\' in filename:
+        return jsonify({'error': 'invalid filename'}), 400
+    fp = os.path.join(app.config['EXP_FOLDER'], filename)
+    if not os.path.exists(fp):
+        app.logger.warning(f'File not found: {fp}')
+        return jsonify({'error': 'not found'}), 404
+    try:
+        with open(fp, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except json.JSONDecodeError as e:
+        app.logger.error(f'JSON decode error for {fp}: {e}')
+        return jsonify({'error': f'Invalid JSON: {str(e)}'}), 500
+    except Exception as e:
+        app.logger.error(f'Error reading file {fp}: {e}')
+        return jsonify({'error': str(e)}), 500
 
 # ========== 仿真 ==========
 @app.route('/login', methods=['GET', 'POST'])

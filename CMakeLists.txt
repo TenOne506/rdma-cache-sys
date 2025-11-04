@@ -32,6 +32,9 @@ add_executable(bench_token_compress tools/bench_token_compress.cpp src/tokens.cp
 target_include_directories(bench_token_compress PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(bench_token_compress Threads::Threads)
 
+add_executable(exp_a1_compress tools/exp_a1_compress.cpp src/tokens.cpp)
+target_include_directories(exp_a1_compress PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
 add_executable(cache_experiments tools/cache_experiments.cpp src/tokens.cpp src/cache_layers.cpp src/access_patterns.cpp src/migration.cpp src/simulator.cpp)
 target_include_directories(cache_experiments PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(cache_experiments Threads::Threads)
