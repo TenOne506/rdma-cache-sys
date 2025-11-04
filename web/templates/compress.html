@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}压缩基准 - RDMA Cache System{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="main-content">
+  <h2 class="mb-4">元数据压缩基准</h2>
+
+  <form id="benchForm" class="row g-3">
+    <div class="col-md-3">
+      <label class="form-label">Token类型</label>
+      <select class="form-select" name="type">
+        <option value="PD">PD</option>
+        <option value="MR">MR</option>
+        <option value="CQ">CQ</option>
+        <option value="QP" selected>QP</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">N（对象数）</label>
+      <input type="number" class="form-control" name="N" value="100000" min="1000">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">iters（重复次数）</label>
+      <input type="number" class="form-control" name="iters" value="5" min="1">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">threads（线程）</label>
+      <input type="number" class="form-control" name="threads" value="4" min="1">
+    </div>
+    <div class="col-12">
+      <button type="submit" class="btn btn-primary" id="runBtn">运行基准</button>
+      <span id="status" class="ms-3 text-info" style="display:none">正在运行...</span>
+    </div>
+  </form>
+
+  <hr>
+
+  <div class="row">
+    <div class="col-md-6">
+      <h5>结果文件</h5>
+      <ul id="benchFiles"></ul>
+    </div>
+    <div class="col-md-6">
+      <h5>结果详情</h5>
+      <pre id="benchDetail" style="height:200px;overflow:auto;background:#f7f7f7;padding:10px"></pre>
+    </div>
+  </div>
+
+  <div class="row mt-4">
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header">吞吐 (tokens/s)</div>
+        <div class="card-body"><canvas id="throughputChart"></canvas></div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header">平均时延 (us/op)</div>
+        <div class="card-body"><canvas id="latChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let tpChart, ltChart;
+
+function loadFiles() {
+  fetch('/api/compress/files')
+    .then(r=>r.json())
+    .then(files => {
+      const ul = document.getElementById('benchFiles');
+      ul.innerHTML = '';
+      files.forEach(f => {
+        const li = document.createElement('li');
+        li.innerHTML = `<a href="#" data-file="${f.filename}">${f.filename}</a> <small class="text-muted">${f.time}</small>`;
+        li.querySelector('a').addEventListener('click', (e)=>{
+          e.preventDefault();
+          loadResult(e.target.dataset.file);
+        });
+        ul.appendChild(li);
+      });
+      if (files.length>0) loadResult(files[0].filename);
+    });
+}
+
+function loadResult(filename) {
+  fetch('/api/compress/result?file='+encodeURIComponent(filename))
+    .then(r=>r.json())
+    .then(data => {
+      document.getElementById('benchDetail').textContent = JSON.stringify(data, null, 2);
+      updateCharts();
+    });
+}
+
+function updateCharts() {
+  fetch('/api/compress/files')
+    .then(r=>r.json())
+    .then(async files => {
+      const labels = [];
+      const thpts = [];
+      const lats = [];
+      for (const f of files.slice(0,20).reverse()) { // 最近20条
+        const res = await fetch('/api/compress/result?file='+encodeURIComponent(f.filename));
+        const d = await res.json();
+        if (!d.error) {
+          labels.push(f.filename.replace('bench_','').replace('.json',''));
+          thpts.push(d.throughput_tokens_per_sec || 0);
+          lats.push(d.avg_us_per_encode_decode || 0);
+        }
+      }
+      const ctx1 = document.getElementById('throughputChart');
+      const ctx2 = document.getElementById('latChart');
+      if (tpChart) tpChart.destroy();
+      if (ltChart) ltChart.destroy();
+      tpChart = new Chart(ctx1, {type:'bar', data:{labels, datasets:[{label:'tokens/s', data: thpts, backgroundColor:'rgba(54,162,235,0.6)'}]}, options:{responsive:true}});
+      ltChart = new Chart(ctx2, {type:'line', data:{labels, datasets:[{label:'us/op', data: lats, borderColor:'rgba(255,99,132,1)'}]}, options:{responsive:true}});
+    });
+}
+
+document.getElementById('benchForm').addEventListener('submit', function(e){
+  e.preventDefault();
+  const form = new FormData(this);
+  const status = document.getElementById('status');
+  status.style.display = 'inline';
+  status.textContent = '正在运行...';
+  fetch('/api/compress/run', {method:'POST', body: form})
+    .then(r=>r.json())
+    .then(res => {
+      setTimeout(()=>{ status.style.display='none'; loadFiles(); }, 2000);
+    });
+});
+
+loadFiles();
+</script>
+{% endblock %}

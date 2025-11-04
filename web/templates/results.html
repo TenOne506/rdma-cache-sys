@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}结果查询 - RDMA Cache System{% endblock %}
+
+{% block content %}
+<div class="main-content">
+    <h2 class="mb-4">仿真结果</h2>
+    
+    {% if results %}
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>文件名</th>
+                    <th>生成时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for result in results %}
+                <tr>
+                    <td>{{ result.filename }}</td>
+                    <td>{{ result.time }}</td>
+                    <td>
+                        <button class="btn btn-sm btn-primary" onclick="loadResult('{{ result.filename }}')">查看详情</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="alert alert-info">
+        暂无结果文件
+    </div>
+    {% endif %}
+    
+    <div id="resultDetail" class="mt-4" style="display: none;">
+        <h4>结果详情</h4>
+        <div id="resultContent"></div>
+    </div>
+</div>
+
+<script>
+function loadResult(filename) {
+    fetch('/results/' + filename)
+        .then(response => response.json())
+        .then(data => {
+            const detailDiv = document.getElementById('resultDetail');
+            const contentDiv = document.getElementById('resultContent');
+            
+            let html = '<div class="row">';
+            html += '<div class="col-md-6"><table class="table table-bordered">';
+            html += '<tr><th>总访问次数</th><td>' + data.total_accesses + '</td></tr>';
+            html += '<tr><th>L1命中</th><td>' + data.l1_hits + ' (' + (data.l1_hit_rate * 100).toFixed(2) + '%)</td></tr>';
+            html += '<tr><th>L2命中</th><td>' + data.l2_hits + ' (' + (data.l2_hit_rate * 100).toFixed(2) + '%)</td></tr>';
+            html += '<tr><th>L3命中</th><td>' + data.l3_hits + ' (' + (data.l3_hit_rate * 100).toFixed(2) + '%)</td></tr>';
+            html += '<tr><th>未命中</th><td>' + data.misses + ' (' + (data.miss_rate * 100).toFixed(2) + '%)</td></tr>';
+            html += '<tr><th>总体命中率</th><td><strong>' + (data.overall_hit_rate * 100).toFixed(2) + '%</strong></td></tr>';
+            html += '</table></div>';
+            
+            html += '<div class="col-md-6"><table class="table table-bordered">';
+            html += '<tr><th>迁移统计</th><th>次数</th></tr>';
+            html += '<tr><td>L3 → L2</td><td>' + data.promote_l3_to_l2 + '</td></tr>';
+            html += '<tr><td>L2 → L1</td><td>' + data.promote_l2_to_l1 + '</td></tr>';
+            html += '<tr><td>L1 → L2</td><td>' + data.demote_l1_to_l2 + '</td></tr>';
+            html += '<tr><td>L2 → L3</td><td>' + data.demote_l2_to_l3 + '</td></tr>';
+            html += '</table></div></div>';
+            
+            contentDiv.innerHTML = html;
+            detailDiv.style.display = 'block';
+            
+            // 滚动到详情区域
+            detailDiv.scrollIntoView({ behavior: 'smooth' });
+        })
+        .catch(error => {
+            alert('加载失败: ' + error.message);
+        });
+}
+</script>
+{% endblock %}
+

@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}首页 - RDMA Cache System{% endblock %}
+
+{% block content %}
+<div class="main-content">
+    <h1 class="mb-4">RDMA缓存优化及仿真系统</h1>
+    
+    <div class="row">
+        <div class="col-md-3 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">模拟仿真</h5>
+                    <p class="card-text">配置并运行RDMA缓存仿真实验</p>
+                    <a href="{{ url_for('simulation') }}" class="btn btn-primary">开始仿真</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">结果查询</h5>
+                    <p class="card-text">查看仿真实验结果和性能指标</p>
+                    <a href="{{ url_for('results') }}" class="btn btn-primary">查看结果</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">日志查询</h5>
+                    <p class="card-text">查看仿真运行日志和调试信息</p>
+                    <a href="{{ url_for('logs') }}" class="btn btn-primary">查看日志</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">分层缓存实验</h5>
+                    <p class="card-text">批量运行并绘制命中率/延迟图</p>
+                    <a href="{{ url_for('experiments_page') }}" class="btn btn-success">打开实验</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">压缩基准</h5>
+                    <p class="card-text">测量 encode/decode 吞吐与时延</p>
+                    <a href="{{ url_for('compress_page') }}" class="btn btn-warning">打开基准</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">三层拓扑</h5>
+                    <p class="card-text">查看 L1/L2/L3 拓扑与最新统计</p>
+                    <a href="{{ url_for('topology_page') }}" class="btn btn-secondary">查看拓扑</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">L3 实验</h5>
+                    <p class="card-text">按需解压/懒加载 热力图与折线</p>
+                    <a href="{{ url_for('experiments_l3_page') }}" class="btn btn-info">打开 L3 实验</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">系统说明</h5>
+                    <p class="card-text">
+                        本系统实现了RDMA缓存优化仿真，包括：
+                    </p>
+                    <ul>
+                        <li><strong>元数据压缩</strong>：统一的Token结构（PD、MR、CQ、QP）</li>
+                        <li><strong>分层缓存</strong>：L1（NIC SRAM）、L2（CXL内存）、L3（Host DRAM）</li>
+                        <li><strong>访问模式优化</strong>：Hot Inline、Prefetched Batch、On-demand Expand</li>
+                        <li><strong>迁移策略</strong>：基于LRU/LFU混合的Promote/Demote机制</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

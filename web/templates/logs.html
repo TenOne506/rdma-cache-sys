@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}日志查询 - RDMA Cache System{% endblock %}
+
+{% block content %}
+<div class="main-content">
+    <h2 class="mb-4">仿真日志</h2>
+    
+    {% if logs %}
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>文件名</th>
+                    <th>生成时间</th>
+                    <th>文件大小</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td>{{ log.filename }}</td>
+                    <td>{{ log.time }}</td>
+                    <td>{{ "%.2f"|format(log.size / 1024) }} KB</td>
+                    <td>
+                        <a href="/logs/{{ log.filename }}" class="btn btn-sm btn-primary">查看</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="alert alert-info">
+        暂无日志文件
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+

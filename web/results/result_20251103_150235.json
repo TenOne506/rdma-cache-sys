@@ -1,0 +1,23 @@
+{
+  "total_accesses": 100000,
+  "l1_hits": 57357,
+  "l2_hits": 32643,
+  "l3_hits": 10000,
+  "misses": 0,
+  "l1_hit_rate": 0.573570,
+  "l2_hit_rate": 0.326430,
+  "l3_hit_rate": 0.100000,
+  "overall_hit_rate": 1.000000,
+  "miss_rate": 0.000000,
+  "l1_share": 0.573570,
+  "l2_share": 0.326430,
+  "l3_share": 0.100000,
+  "miss_share": 0.000000,
+  "l1_hit_rate_norm": 0.573570,
+  "l2_hit_rate_norm": 0.326430,
+  "l3_hit_rate_norm": 0.100000,
+  "promote_l3_to_l2": 0,
+  "promote_l2_to_l1": 0,
+  "demote_l1_to_l2": 0,
+  "demote_l2_to_l3": 0
+}

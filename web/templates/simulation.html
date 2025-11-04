@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}模拟仿真 - RDMA Cache System{% endblock %}
+
+{% block content %}
+<div class="main-content">
+    <h2 class="mb-4">仿真配置</h2>
+    
+    <form id="simulationForm">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label for="num_tokens" class="form-label">Token数量</label>
+                    <input type="number" class="form-control" id="num_tokens" name="num_tokens" value="10000" min="100" required>
+                    <small class="form-text text-muted">模拟的Token对象总数</small>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="num_accesses" class="form-label">访问次数</label>
+                    <input type="number" class="form-control" id="num_accesses" name="num_accesses" value="100000" min="1000" required>
+                    <small class="form-text text-muted">仿真中的总访问次数</small>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="workload_type" class="form-label">工作负载类型</label>
+                    <select class="form-select" id="workload_type" name="workload_type">
+                        <option value="0">均匀分布 (Uniform)</option>
+                        <option value="1" selected>Zipfian分布 (热点)</option>
+                        <option value="2">顺序访问 (Sequential)</option>
+                        <option value="3">随机游走 (Random Walk)</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label for="l1_capacity" class="form-label">L1缓存容量（条目数）</label>
+                    <input type="number" class="form-control" id="l1_capacity" name="l1_capacity" value="8192" min="100" required>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="l2_capacity_mb" class="form-label">L2缓存容量（MB）</label>
+                    <input type="number" class="form-control" id="l2_capacity_mb" name="l2_capacity_mb" value="1024" min="100" required>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="l3_capacity_mb" class="form-label">L3缓存容量（MB）</label>
+                    <input type="number" class="form-control" id="l3_capacity_mb" name="l3_capacity_mb" value="4096" min="1000" required>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label for="promote_l1_threshold" class="form-label">Promote到L1阈值</label>
+                    <input type="number" class="form-control" id="promote_l1_threshold" name="promote_l1_threshold" value="128" min="1" required>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label for="promote_l2_threshold" class="form-label">Promote到L2阈值</label>
+                    <input type="number" class="form-control" id="promote_l2_threshold" name="promote_l2_threshold" value="16" min="1" required>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mt-4">
+            <button type="submit" class="btn btn-primary btn-lg" id="startBtn">开始仿真</button>
+            <button type="reset" class="btn btn-secondary btn-lg ms-2">重置</button>
+        </div>
+    </form>
+    
+    <div id="statusArea" class="mt-4" style="display: none;">
+        <div class="alert alert-info">
+            <h5>仿真状态</h5>
+            <div id="statusMessage">正在启动仿真...</div>
+            <div class="progress mt-2">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('simulationForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const formData = new FormData(this);
+    const statusArea = document.getElementById('statusArea');
+    const statusMessage = document.getElementById('statusMessage');
+    const startBtn = document.getElementById('startBtn');
+    
+    statusArea.style.display = 'block';
+    startBtn.disabled = true;
+    statusMessage.textContent = '正在启动仿真...';
+    
+    fetch('/simulation', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'started') {
+            statusMessage.textContent = '仿真已启动，正在后台运行。结果将保存到: ' + data.result_file;
+            startBtn.disabled = false;
+            
+            // 5秒后提示可以查看结果
+            setTimeout(() => {
+                statusMessage.innerHTML += '<br><br><a href="/results" class="btn btn-sm btn-success">查看结果</a>';
+            }, 5000);
+        }
+    })
+    .catch(error => {
+        statusMessage.textContent = '错误: ' + error.message;
+        startBtn.disabled = false;
+    });
+});
+</script>
+{% endblock %}
+

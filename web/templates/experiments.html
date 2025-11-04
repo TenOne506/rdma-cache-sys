@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+
+{% block title %}分层缓存实验 - RDMA Cache System{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="main-content">
+  <h2 class="mb-4">分层缓存实验</h2>
+
+  <form id="expForm" class="row g-3 mb-3">
+    <div class="col-md-3">
+      <label class="form-label">Tokens</label>
+      <input type="number" class="form-control" name="tokens" value="5000" min="100" required>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Accesses</label>
+      <input type="number" class="form-control" name="accesses" value="20000" min="1000" required>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Workload</label>
+      <select class="form-select" name="workload">
+        <option value="0">Uniform</option>
+        <option value="1" selected>Zipfian</option>
+        <option value="2">Sequential</option>
+        <option value="3">Random Walk</option>
+      </select>
+    </div>
+    <div class="col-md-3 d-flex align-items-end">
+      <button type="submit" class="btn btn-primary w-100" id="runBtn">运行实验</button>
+    </div>
+  </form>
+
+  <div class="alert alert-info" id="status" style="display:none">正在运行实验...</div>
+
+  <div class="mb-3">
+    <h5>历史CSV文件</h5>
+    <ul id="fileList"></ul>
+  </div>
+
+  <div class="row">
+    <div class="col-md-6">
+      <div class="card mb-3">
+        <div class="card-header">L1/L2/L3 占比（按 batch_size 分组）</div>
+        <div class="card-body">
+          <div id="sharesChart"></div>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-header">平均延迟（ns）随 batch_size</div>
+        <div class="card-body">
+          <div id="latencyLine"></div>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-header">估算通信带宽（MB/s）随 batch_size</div>
+        <div class="card-body">
+          <div id="bwLine"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card mb-3">
+        <div class="card-header">L1 占比 热力图（l1_capacity x batch_size）</div>
+        <div class="card-body">
+          <div id="heatmap"></div>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-header">L2 占比 热力图（l1_capacity x batch_size）</div>
+        <div class="card-body">
+          <div id="heatmapL2"></div>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-header">L3 占比 热力图（l1_capacity x batch_size）</div>
+        <div class="card-body">
+          <div id="heatmapL3"></div>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-header">平均延迟 热力图（ns）</div>
+        <div class="card-body">
+          <div id="latencyHeat"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function loadFiles() {
+  fetch('/api/experiments/files')
+    .then(r => r.json())
+    .then(files => {
+      const ul = document.getElementById('fileList');
+      ul.innerHTML = '';
+      files.forEach(f => {
+        const li = document.createElement('li');
+        li.innerHTML = `<a href="#" data-file="${f.filename}">${f.filename}</a> <small class="text-muted">${f.time}</small>`;
+        li.querySelector('a').addEventListener('click', (e) => {
+          e.preventDefault();
+          loadCsv(e.target.dataset.file);
+        });
+        ul.appendChild(li);
+      });
+      if (files.length > 0) loadCsv(files[0].filename);
+    });
+}
+
+function loadCsv(filename) {
+  fetch('/api/experiments/data?file=' + encodeURIComponent(filename))
+    .then(r => r.json())
+    .then(rows => {
+      drawCharts(rows);
+    });
+}
+
+function drawCharts(rows) {
+  // shares chart: batch_size on x, stacked bars of shares grouped by l1_capacity
+  const byBatch = {};
+  rows.forEach(r => {
+    const b = r.batch_size; const l1c = r.l1_capacity;
+    if (!byBatch[b]) byBatch[b] = {};
+    byBatch[b][l1c] = r;
+  });
+  const batches = Object.keys(byBatch).map(Number).sort((a,b)=>a-b);
+  const l1caps = Array.from(new Set(rows.map(r=>r.l1_capacity))).sort((a,b)=>a-b);
+  const traces = [];
+  ['l1_share','l2_share','l3_share'].forEach((field, idx) => {
+    const trace = {x: [], y: [], name: field, type:'bar'};
+    trace.x = batches.map(b => 'B'+b);
+    trace.y = batches.map(b => {
+      let vals = l1caps.map(c => (byBatch[b][c] ? byBatch[b][c][field] : 0));
+      return vals.reduce((a,v)=>a+v,0)/Math.max(vals.length,1);
+    });
+    traces.push(trace);
+  });
+  const layout1 = {barmode:'stack', height: 280, margin:{t:20}};
+  Plotly.newPlot('sharesChart', traces, layout1, {displayModeBar: false});
+
+  // latency line: avg of avg_latency_ns over l1caps per batch
+  const lat = {x: batches.map(b=>'B'+b), y: batches.map(b=>{
+    let vals = l1caps.map(c => (byBatch[b][c] ? byBatch[b][c]['avg_latency_ns'] : 0));
+    return vals.reduce((a,v)=>a+v,0)/Math.max(vals.length,1);
+  }), type:'scatter', mode:'lines+markers', name:'avg_latency_ns'};
+  const layoutLine = {height: 280, margin:{t:20}, yaxis:{title:'ns'}};
+  Plotly.newPlot('latencyLine', [lat], layoutLine, {displayModeBar:false});
+
+  // bandwidth line: avg of estimated_comm_bw_MBps over l1caps per batch
+  const bw = {x: batches.map(b=>'B'+b), y: batches.map(b=>{
+    let vals = l1caps.map(c => (byBatch[b][c] ? byBatch[b][c]['estimated_comm_bw_MBps'] : 0));
+    return vals.reduce((a,v)=>a+v,0)/Math.max(vals.length,1);
+  }), type:'scatter', mode:'lines+markers', name:'estimated_comm_bw_MBps'};
+  const layoutBW = {height: 280, margin:{t:20}, yaxis:{title:'MB/s'}};
+  Plotly.newPlot('bwLine', [bw], layoutBW, {displayModeBar:false});
+
+  // heatmap: l1_share matrix (l1_capacity x batch_size)
+  const z1 = l1caps.map(()=> batches.map(()=>0));
+  const z2 = l1caps.map(()=> batches.map(()=>0));
+  const z3 = l1caps.map(()=> batches.map(()=>0));
+  l1caps.forEach((c, i) => {
+    batches.forEach((b, j) => {
+      const row = byBatch[b][c];
+      z1[i][j] = row ? row['l1_share'] : 0;
+      z2[i][j] = row ? row['l2_share'] : 0;
+      z3[i][j] = row ? row['l3_share'] : 0;
+    });
+  });
+  const heat1 = [{z:z1, x:batches, y:l1caps, type:'heatmap', colorscale:'YlGnBu'}];
+  const heat2 = [{z:z2, x:batches, y:l1caps, type:'heatmap', colorscale:'PuBuGn'}];
+  const heat3 = [{z:z3, x:batches, y:l1caps, type:'heatmap', colorscale:'BuPu'}];
+  const layoutH = {height: 280, margin:{t:20}, xaxis:{title:'batch_size'}, yaxis:{title:'l1_capacity'}};
+  Plotly.newPlot('heatmap', heat1, layoutH, {displayModeBar: false});
+  Plotly.newPlot('heatmapL2', heat2, layoutH, {displayModeBar: false});
+  Plotly.newPlot('heatmapL3', heat3, layoutH, {displayModeBar: false});
+
+  // latency heatmap: avg_latency_ns
+  const zl = l1caps.map(()=> batches.map(()=>0));
+  l1caps.forEach((c, i) => {
+    batches.forEach((b, j) => {
+      zl[i][j] = byBatch[b][c] ? byBatch[b][c]['avg_latency_ns'] : 0;
+    });
+  });
+  const heatL = [{z:zl, x:batches, y:l1caps, type:'heatmap', colorscale:'YlOrRd'}];
+  const layoutL = {height: 280, margin:{t:20}, xaxis:{title:'batch_size'}, yaxis:{title:'l1_capacity'}};
+  Plotly.newPlot('latencyHeat', heatL, layoutL, {displayModeBar:false});
+}
+
+document.getElementById('expForm').addEventListener('submit', function(e){
+  e.preventDefault();
+  const form = new FormData(this);
+  const status = document.getElementById('status');
+  status.style.display = 'block';
+  status.textContent = '正在运行实验...';
+  fetch('/api/experiments/run', {method:'POST', body: form})
+    .then(r=>r.json())
+    .then(res => {
+      status.textContent = '已启动: ' + res.csv;
+      setTimeout(loadFiles, 7000);
+    })
+});
+
+loadFiles();
+</script>
+{% endblock %}

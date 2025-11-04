@@ -1,0 +1,10 @@
+{
+  "type": "PD",
+  "N": 100000,
+  "iters": 5,
+  "threads": 4,
+  "total_bytes": 4000000,
+  "avg_us_per_encode_decode": 0.00352448,
+  "throughput_tokens_per_sec": 283730000.0,
+  "timestamp": "20251103_151640"
+}

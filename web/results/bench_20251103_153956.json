@@ -1,0 +1,10 @@
+{
+  "type": "QP",
+  "N": 100000,
+  "iters": 5,
+  "threads": 20,
+  "total_bytes": 7000000,
+  "avg_us_per_encode_decode": 0.00464265,
+  "throughput_tokens_per_sec": 215394000.0,
+  "timestamp": "20251103_153956"
+}
