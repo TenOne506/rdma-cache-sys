@@ -39,3 +39,7 @@ add_executable(cache_experiments tools/cache_experiments.cpp src/tokens.cpp src/
 target_include_directories(cache_experiments PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(cache_experiments Threads::Threads)
 
+add_executable(exp_b1_baseline tools/exp_b1_baseline.cpp src/tokens.cpp src/cache_layers.cpp src/access_patterns.cpp src/migration.cpp)
+target_include_directories(exp_b1_baseline PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(exp_b1_baseline Threads::Threads)
+

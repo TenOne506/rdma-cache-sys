@@ -1,0 +1,499 @@
+{% extends "base.html" %}
+
+{% block title %}B1实验：基线延迟与吞吐对比 - RDMA Cache System{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="main-content">
+  <h2 class="mb-4">B1实验：基线延迟与吞吐对比</h2>
+  <p class="text-muted">证明Proposed在平均延迟、尾延迟、CPU占用与主机PCIe流量上优于Baseline A/B</p>
+
+  <div class="alert alert-info">
+    <strong>Baseline说明：</strong>
+    <ul class="mb-0">
+      <li><strong>Baseline A（传统）</strong>：所有元数据驻留host DRAM</li>
+      <li><strong>Baseline B（L1-only）</strong>：把热点small fields固定放NIC本地（no CXL）</li>
+      <li><strong>Proposed（L1 + L2(CXL) + L3）</strong>：完整设计</li>
+    </ul>
+  </div>
+
+  <form id="expForm" class="row g-3 mb-4">
+    <div class="col-md-3">
+      <label class="form-label">消息大小（字节）</label>
+      <select class="form-select" name="msg_size" id="msgSize">
+        <option value="64">64B</option>
+        <option value="256" selected>256B</option>
+        <option value="1024">1KB</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">QP数量</label>
+      <select class="form-select" name="qp_count" id="qpCount">
+        <option value="1">1</option>
+        <option value="16" selected>16</option>
+        <option value="256">256</option>
+        <option value="4096">4096</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">线程数</label>
+      <select class="form-select" name="thread_count" id="threadCount">
+        <option value="1">1</option>
+        <option value="8" selected>8</option>
+        <option value="32">32</option>
+        <option value="128">128</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">操作次数</label>
+      <input type="number" class="form-control" name="ops_per_test" value="100000" min="1000" max="10000000" step="1000">
+    </div>
+    <div class="col-12">
+      <button type="submit" class="btn btn-primary" id="runBtn">
+        <span id="runBtnText">运行B1实验</span>
+        <span class="spinner-border spinner-border-sm ms-2" id="runSpinner" style="display:none"></span>
+      </button>
+      <span id="status" class="ms-3 text-info" style="display:none">正在运行实验，请稍候...</span>
+    </div>
+  </form>
+
+  <hr>
+
+  <div class="row mb-4">
+    <div class="col-md-6">
+      <h5>结果文件 <button class="btn btn-sm btn-secondary" onclick="loadExpFiles()">刷新</button></h5>
+      <div id="filesStatus" class="text-muted small mb-2"></div>
+      <ul id="expFiles" class="list-group" style="max-height:300px;overflow-y:auto"></ul>
+    </div>
+    <div class="col-md-6">
+      <h5>当前结果摘要</h5>
+      <div id="summaryStatus" class="text-muted small mb-2"></div>
+      <div id="resultSummary" class="table-responsive" style="max-height:300px;overflow-y:auto">
+        <table class="table table-sm table-striped">
+          <thead>
+            <tr>
+              <th>Baseline</th>
+              <th>P50 (ns)</th>
+              <th>P95 (ns)</th>
+              <th>P99 (ns)</th>
+              <th>吞吐量 (ops/s)</th>
+              <th>CPU (%)</th>
+              <th>PCIe (MB/s)</th>
+            </tr>
+          </thead>
+          <tbody id="summaryTableBody">
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="row mt-4">
+    <div class="col-12">
+      <h5>延迟对比：QP数量 vs 延迟（P50/P95/P99）</h5>
+      <p class="text-muted small">选择要查看的基线类型和百分位数</p>
+      <div class="row mb-3">
+        <div class="col-md-3">
+          <label class="form-label">基线类型</label>
+          <select class="form-select" id="baselineFilter" onchange="updateCharts()">
+            <option value="all">全部</option>
+            <option value="0">Baseline A</option>
+            <option value="1">Baseline B</option>
+            <option value="2">Proposed</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">百分位数</label>
+          <select class="form-select" id="percentileFilter" onchange="updateCharts()">
+            <option value="p50">P50</option>
+            <option value="p95" selected>P95</option>
+            <option value="p99">P99</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">消息大小</label>
+          <select class="form-select" id="msgSizeFilter" onchange="updateCharts()">
+            <option value="all">全部</option>
+            <option value="64">64B</option>
+            <option value="256" selected>256B</option>
+            <option value="1024">1KB</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">线程数</label>
+          <select class="form-select" id="threadFilter" onchange="updateCharts()">
+            <option value="all">全部</option>
+            <option value="1">1</option>
+            <option value="8" selected>8</option>
+            <option value="32">32</option>
+            <option value="128">128</option>
+          </select>
+        </div>
+      </div>
+      <div id="latencyChart" style="height:400px"></div>
+    </div>
+  </div>
+
+  <div class="row mt-4">
+    <div class="col-md-6">
+      <h5>吞吐量对比：QP数量 vs 吞吐量 (ops/s)</h5>
+      <div id="throughputChart" style="height:350px"></div>
+    </div>
+    <div class="col-md-6">
+      <h5>PCIe带宽对比：QP数量 vs PCIe带宽 (MB/s)</h5>
+      <div id="bandwidthChart" style="height:350px"></div>
+    </div>
+  </div>
+
+  <div class="row mt-4">
+    <div class="col-md-6">
+      <h5>CPU占用对比：QP数量 vs CPU占用率 (%)</h5>
+      <div id="cpuChart" style="height:350px"></div>
+    </div>
+    <div class="col-md-6">
+      <h5>综合性能对比</h5>
+      <div id="comprehensiveChart" style="height:350px"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentData = null;
+
+document.getElementById('expForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const formData = new FormData(e.target);
+  const btn = document.getElementById('runBtn');
+  const btnText = document.getElementById('runBtnText');
+  const spinner = document.getElementById('runSpinner');
+  const status = document.getElementById('status');
+  
+  btn.disabled = true;
+  btnText.textContent = '运行中...';
+  spinner.style.display = 'inline-block';
+  status.style.display = 'inline';
+  
+  fetch('/api/exp_b1/run', {
+    method: 'POST',
+    body: formData
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.status === 'started') {
+      status.textContent = '实验已启动，请等待完成...';
+      // 定期检查结果
+      setTimeout(checkResult, 5000);
+    } else {
+      alert('启动失败: ' + (data.error || '未知错误'));
+      resetButton();
+    }
+  })
+  .catch(err => {
+    alert('请求失败: ' + err);
+    resetButton();
+  });
+  
+  function resetButton() {
+    btn.disabled = false;
+    btnText.textContent = '运行B1实验';
+    spinner.style.display = 'none';
+    status.style.display = 'none';
+  }
+});
+
+function checkResult() {
+  loadExpFiles();
+  setTimeout(checkResult, 5000);
+}
+
+function loadExpFiles() {
+  fetch('/api/exp_b1/files')
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        document.getElementById('filesStatus').textContent = '错误: ' + data.error;
+        return;
+      }
+      const filesList = document.getElementById('expFiles');
+      filesList.innerHTML = '';
+      document.getElementById('filesStatus').textContent = `找到 ${data.length} 个结果文件`;
+      
+      if (data.length === 0) {
+        filesList.innerHTML = '<li class="list-group-item text-muted">暂无结果文件</li>';
+        return;
+      }
+      
+      data.forEach(file => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item d-flex justify-content-between align-items-center';
+        li.innerHTML = `
+          <div>
+            <strong>${file.filename}</strong><br>
+            <small class="text-muted">${file.time}</small>
+          </div>
+          <button class="btn btn-sm btn-primary" onclick="loadResult('${file.filename}')">加载</button>
+        `;
+        filesList.appendChild(li);
+      });
+      
+      // 自动加载最新文件
+      if (data.length > 0 && !currentData) {
+        loadResult(data[0].filename);
+      }
+    })
+    .catch(err => {
+      document.getElementById('filesStatus').textContent = '加载失败: ' + err;
+    });
+}
+
+function loadResult(filename) {
+  fetch(`/api/exp_b1/result?file=${encodeURIComponent(filename)}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        alert('加载失败: ' + data.error);
+        return;
+      }
+      currentData = data;
+      updateSummary(data);
+      updateCharts();
+    })
+    .catch(err => {
+      alert('加载失败: ' + err);
+    });
+}
+
+function updateSummary(data) {
+  if (!data.results || data.results.length === 0) {
+    document.getElementById('summaryStatus').textContent = '无数据';
+    return;
+  }
+  
+  document.getElementById('summaryStatus').textContent = `共 ${data.results.length} 条记录`;
+  
+  // 按baseline分组统计
+  const baselineStats = {};
+  data.results.forEach(r => {
+    const key = r.baseline_name;
+    if (!baselineStats[key]) {
+      baselineStats[key] = {
+        count: 0,
+        p50_sum: 0,
+        p95_sum: 0,
+        p99_sum: 0,
+        throughput_sum: 0,
+        cpu_sum: 0,
+        pcie_sum: 0
+      };
+    }
+    baselineStats[key].count++;
+    baselineStats[key].p50_sum += r.p50_latency_ns;
+    baselineStats[key].p95_sum += r.p95_latency_ns;
+    baselineStats[key].p99_sum += r.p99_latency_ns;
+    baselineStats[key].throughput_sum += r.throughput_ops_per_sec;
+    baselineStats[key].cpu_sum += r.cpu_usage_percent;
+    baselineStats[key].pcie_sum += r.pcie_bandwidth_mbps;
+  });
+  
+  const tbody = document.getElementById('summaryTableBody');
+  tbody.innerHTML = '';
+  
+  ['Baseline A', 'Baseline B', 'Proposed'].forEach(name => {
+    if (!baselineStats[name]) return;
+    const stats = baselineStats[name];
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${name}</strong></td>
+      <td>${(stats.p50_sum / stats.count).toFixed(0)}</td>
+      <td>${(stats.p95_sum / stats.count).toFixed(0)}</td>
+      <td>${(stats.p99_sum / stats.count).toFixed(0)}</td>
+      <td>${(stats.throughput_sum / stats.count).toFixed(2)}</td>
+      <td>${(stats.cpu_sum / stats.count).toFixed(2)}</td>
+      <td>${(stats.pcie_sum / stats.count).toFixed(2)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function updateCharts() {
+  if (!currentData || !currentData.results) return;
+  
+  const baselineFilter = document.getElementById('baselineFilter').value;
+  const percentileFilter = document.getElementById('percentileFilter').value;
+  const msgSizeFilter = document.getElementById('msgSizeFilter').value;
+  const threadFilter = document.getElementById('threadFilter').value;
+  
+  // 过滤数据
+  let filtered = currentData.results.filter(r => {
+    if (baselineFilter !== 'all' && r.baseline != baselineFilter) return false;
+    if (msgSizeFilter !== 'all' && r.msg_size != msgSizeFilter) return false;
+    if (threadFilter !== 'all' && r.thread_count != threadFilter) return false;
+    return true;
+  });
+  
+  // 按QP数量分组绘制延迟图
+  const latencyData = {};
+  filtered.forEach(r => {
+    const key = `${r.baseline_name}_${r.qp_count}`;
+    if (!latencyData[key]) {
+      latencyData[key] = {
+        baseline: r.baseline_name,
+        qp_count: r.qp_count,
+        p50: null,
+        p95: null,
+        p99: null
+      };
+    }
+    latencyData[key].p50 = r.p50_latency_ns;
+    latencyData[key].p95 = r.p95_latency_ns;
+    latencyData[key].p99 = r.p99_latency_ns;
+  });
+  
+  const baselineNames = ['Baseline A', 'Baseline B', 'Proposed'];
+  const traces = [];
+  
+  baselineNames.forEach(name => {
+    const baselineData = Object.values(latencyData).filter(d => d.baseline === name);
+    if (baselineData.length === 0) return;
+    
+    baselineData.sort((a, b) => a.qp_count - b.qp_count);
+    
+    const x = baselineData.map(d => d.qp_count);
+    const y = baselineData.map(d => d[percentileFilter]);
+    
+    traces.push({
+      x: x,
+      y: y,
+      name: name,
+      type: 'scatter',
+      mode: 'lines+markers',
+      line: { width: 2 }
+    });
+  });
+  
+  Plotly.newPlot('latencyChart', traces, {
+    title: `延迟对比：QP数量 vs ${percentileFilter.toUpperCase()}延迟`,
+    xaxis: { title: 'QP数量', type: 'log' },
+    yaxis: { title: '延迟 (纳秒)' },
+    legend: { x: 0, y: 1 },
+    margin: { l: 60, r: 20, t: 40, b: 60 }
+  });
+  
+  // 吞吐量图
+  const throughputData = {};
+  filtered.forEach(r => {
+    const key = `${r.baseline_name}_${r.qp_count}`;
+    if (!throughputData[key]) {
+      throughputData[key] = {
+        baseline: r.baseline_name,
+        qp_count: r.qp_count,
+        throughput: 0
+      };
+    }
+    throughputData[key].throughput = r.throughput_ops_per_sec;
+  });
+  
+  const throughputTraces = [];
+  baselineNames.forEach(name => {
+    const data = Object.values(throughputData).filter(d => d.baseline === name);
+    if (data.length === 0) return;
+    data.sort((a, b) => a.qp_count - b.qp_count);
+    throughputTraces.push({
+      x: data.map(d => d.qp_count),
+      y: data.map(d => d.throughput),
+      name: name,
+      type: 'scatter',
+      mode: 'lines+markers'
+    });
+  });
+  
+  Plotly.newPlot('throughputChart', throughputTraces, {
+    title: '吞吐量对比',
+    xaxis: { title: 'QP数量', type: 'log' },
+    yaxis: { title: '吞吐量 (ops/s)' },
+    legend: { x: 0, y: 1 }
+  });
+  
+  // PCIe带宽图
+  const bandwidthData = {};
+  filtered.forEach(r => {
+    const key = `${r.baseline_name}_${r.qp_count}`;
+    if (!bandwidthData[key]) {
+      bandwidthData[key] = {
+        baseline: r.baseline_name,
+        qp_count: r.qp_count,
+        bandwidth: 0
+      };
+    }
+    bandwidthData[key].bandwidth = r.pcie_bandwidth_mbps;
+  });
+  
+  const bandwidthTraces = [];
+  baselineNames.forEach(name => {
+    const data = Object.values(bandwidthData).filter(d => d.baseline === name);
+    if (data.length === 0) return;
+    data.sort((a, b) => a.qp_count - b.qp_count);
+    bandwidthTraces.push({
+      x: data.map(d => d.qp_count),
+      y: data.map(d => d.bandwidth),
+      name: name,
+      type: 'scatter',
+      mode: 'lines+markers'
+    });
+  });
+  
+  Plotly.newPlot('bandwidthChart', bandwidthTraces, {
+    title: 'PCIe带宽对比',
+    xaxis: { title: 'QP数量', type: 'log' },
+    yaxis: { title: 'PCIe带宽 (MB/s)' },
+    legend: { x: 0, y: 1 }
+  });
+  
+  // CPU占用图
+  const cpuData = {};
+  filtered.forEach(r => {
+    const key = `${r.baseline_name}_${r.qp_count}`;
+    if (!cpuData[key]) {
+      cpuData[key] = {
+        baseline: r.baseline_name,
+        qp_count: r.qp_count,
+        cpu: 0
+      };
+    }
+    cpuData[key].cpu = r.cpu_usage_percent;
+  });
+  
+  const cpuTraces = [];
+  baselineNames.forEach(name => {
+    const data = Object.values(cpuData).filter(d => d.baseline === name);
+    if (data.length === 0) return;
+    data.sort((a, b) => a.qp_count - b.qp_count);
+    cpuTraces.push({
+      x: data.map(d => d.qp_count),
+      y: data.map(d => d.cpu),
+      name: name,
+      type: 'scatter',
+      mode: 'lines+markers'
+    });
+  });
+  
+  Plotly.newPlot('cpuChart', cpuTraces, {
+    title: 'CPU占用对比',
+    xaxis: { title: 'QP数量', type: 'log' },
+    yaxis: { title: 'CPU占用率 (%)' },
+    legend: { x: 0, y: 1 }
+  });
+}
+
+// 页面加载时自动加载文件列表
+loadExpFiles();
+</script>
+{% endblock %}
+
+

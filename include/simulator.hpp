@@ -74,6 +74,12 @@ struct PerformanceMetrics {
     uint64_t total_expand_batch = 0;
     uint64_t pre_staged_count = 0;
     
+    // 迁移操作统计
+    uint64_t promote_l3_to_l2 = 0;
+    uint64_t promote_l2_to_l1 = 0;
+    uint64_t demote_l1_to_l2 = 0;
+    uint64_t demote_l2_to_l3 = 0;
+    
     double l1_hit_rate() const {
         return total_accesses > 0 ? 
             static_cast<double>(l1_hits) / total_accesses : 0.0;

@@ -88,6 +88,28 @@
       </div>
     </div>
   </div>
+  
+  <div class="row">
+    <div class="col-md-12">
+      <h4 class="mt-4 mb-3">迁移操作统计</h4>
+    </div>
+    <div class="col-md-6">
+      <div class="card mb-3">
+        <div class="card-header">迁移操作数量（按 batch_size 分组）</div>
+        <div class="card-body">
+          <div id="migrationChart"></div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card mb-3">
+        <div class="card-header">迁移操作 热力图（l1_capacity x batch_size）</div>
+        <div class="card-body">
+          <div id="migrationHeatmap"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -187,6 +209,41 @@ function drawCharts(rows) {
   const heatL = [{z:zl, x:batches, y:l1caps, type:'heatmap', colorscale:'YlOrRd'}];
   const layoutL = {height: 280, margin:{t:20}, xaxis:{title:'batch_size'}, yaxis:{title:'l1_capacity'}};
   Plotly.newPlot('latencyHeat', heatL, layoutL, {displayModeBar:false});
+
+  // migration chart: stacked bar chart of migration counts
+  const migrationTraces = [];
+  const migrationFields = [
+    {name: 'Promote L3→L2', field: 'promote_l3_to_l2'},
+    {name: 'Promote L2→L1', field: 'promote_l2_to_l1'},
+    {name: 'Demote L1→L2', field: 'demote_l1_to_l2'},
+    {name: 'Demote L2→L3', field: 'demote_l2_to_l3'}
+  ];
+  migrationFields.forEach(mf => {
+    const trace = {x: [], y: [], name: mf.name, type: 'bar'};
+    trace.x = batches.map(b => 'B'+b);
+    trace.y = batches.map(b => {
+      let vals = l1caps.map(c => (byBatch[b][c] ? (byBatch[b][c][mf.field] || 0) : 0));
+      return vals.reduce((a,v)=>a+v,0);
+    });
+    migrationTraces.push(trace);
+  });
+  const layoutMig = {barmode:'stack', height: 300, margin:{t:20}, yaxis:{title:'Migration Count'}};
+  Plotly.newPlot('migrationChart', migrationTraces, layoutMig, {displayModeBar: false});
+
+  // migration heatmap: total migration count (l1_capacity x batch_size)
+  const zm = l1caps.map(()=> batches.map(()=>0));
+  l1caps.forEach((c, i) => {
+    batches.forEach((b, j) => {
+      const row = byBatch[b][c];
+      if (row) {
+        zm[i][j] = (row['promote_l3_to_l2'] || 0) + (row['promote_l2_to_l1'] || 0) +
+                   (row['demote_l1_to_l2'] || 0) + (row['demote_l2_to_l3'] || 0);
+      }
+    });
+  });
+  const heatM = [{z:zm, x:batches, y:l1caps, type:'heatmap', colorscale:'Reds', colorbar:{title:'Total Migrations'}}];
+  const layoutMH = {height: 300, margin:{t:20}, xaxis:{title:'batch_size'}, yaxis:{title:'l1_capacity'}};
+  Plotly.newPlot('migrationHeatmap', heatM, layoutMH, {displayModeBar: false});
 }
 
 document.getElementById('expForm').addEventListener('submit', function(e){
