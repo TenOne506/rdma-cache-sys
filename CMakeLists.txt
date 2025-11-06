@@ -43,3 +43,11 @@ add_executable(exp_b1_baseline tools/exp_b1_baseline.cpp src/tokens.cpp src/cach
 target_include_directories(exp_b1_baseline PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(exp_b1_baseline Threads::Threads)
 
+add_executable(exp_b2_hot_inline tools/exp_b2_hot_inline.cpp src/tokens.cpp src/cache_layers.cpp src/access_patterns.cpp)
+target_include_directories(exp_b2_hot_inline PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(exp_b2_hot_inline Threads::Threads)
+
+add_executable(exp_b3_prefetched_batch tools/exp_b3_prefetched_batch.cpp src/tokens.cpp src/cache_layers.cpp src/access_patterns.cpp)
+target_include_directories(exp_b3_prefetched_batch PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(exp_b3_prefetched_batch Threads::Threads)
+

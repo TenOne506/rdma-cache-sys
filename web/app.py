@@ -387,6 +387,220 @@ def api_exp_b1_result():
         app.logger.error(f'Error reading file {fp}: {e}')
         return jsonify({'error': str(e)}), 500
 
+# ========== B2 实验：Hot Inline 路径并发竞争测试 ==========
+@app.route('/exp_b2')
+@login_required
+def exp_b2():
+    return render_template('exp_b2.html')
+
+@app.route('/api/exp_b2/run', methods=['POST'])
+@login_required
+def api_exp_b2_run():
+    hot_token_count = request.form.get('hot_token_count', '10')
+    ops_per_test = request.form.get('ops_per_test', '1000000')
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    out_file = os.path.join(app.config['EXP_FOLDER'], f'exp_b2_{timestamp}.json')
+
+    def run_exp():
+        # 使用BASE_DIR确保路径正确
+        base_dir = BASE_DIR
+        exe = os.path.join(base_dir, 'build', 'exp_b2_hot_inline')
+        
+        # 验证可执行文件是否存在
+        if not os.path.exists(exe):
+            error_msg = f'Executable not found: {exe}. Please run ./build.sh first.'
+            app.logger.error(error_msg)
+            with open(out_file, 'w') as f:
+                json.dump({'error': error_msg}, f)
+            return
+        
+        # 确保可执行文件有执行权限
+        if not os.access(exe, os.X_OK):
+            error_msg = f'Executable not executable: {exe}'
+            app.logger.error(error_msg)
+            with open(out_file, 'w') as f:
+                json.dump({'error': error_msg}, f)
+            return
+        
+        # exp_b2_hot_inline 会运行所有并发度组合，所以这里只传递输出文件
+        cmd = [exe, out_file]
+        try:
+            app.logger.info(f'Running exp_b2: {cmd} in {base_dir}')
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, cwd=base_dir)
+            if result.returncode != 0:
+                error_msg = f'Execution failed (code {result.returncode}): {result.stderr}'
+                app.logger.error(error_msg)
+                with open(out_file, 'w') as f:
+                    json.dump({'error': error_msg, 'stdout': result.stdout, 'stderr': result.stderr}, f)
+            else:
+                app.logger.info(f'exp_b2 completed successfully, output: {out_file}')
+        except FileNotFoundError as e:
+            error_msg = f'File not found: {e}'
+            app.logger.error(error_msg)
+            with open(out_file, 'w') as f:
+                json.dump({'error': error_msg}, f)
+        except Exception as e:
+            error_msg = f'Exception: {str(e)}'
+            app.logger.error(error_msg, exc_info=True)
+            with open(out_file, 'w') as f:
+                json.dump({'error': error_msg}, f)
+
+    t = threading.Thread(target=run_exp)
+    t.daemon = True
+    t.start()
+    return jsonify({'status': 'started', 'file': out_file})
+
+@app.route('/api/exp_b2/files')
+@login_required
+def api_exp_b2_files():
+    files = []
+    exp_folder = app.config['EXP_FOLDER']
+    try:
+        if not os.path.exists(exp_folder):
+            app.logger.warning(f'EXP_FOLDER does not exist: {exp_folder}')
+            return jsonify({'error': f'Folder not found: {exp_folder}'}), 500
+        for f in os.listdir(exp_folder):
+            if f.startswith('exp_b2_') and f.endswith('.json'):
+                fp = os.path.join(exp_folder, f)
+                if os.path.isfile(fp):
+                    files.append({'filename': f, 'time': datetime.fromtimestamp(os.path.getmtime(fp)).strftime('%Y-%m-%d %H:%M:%S')})
+        files.sort(key=lambda x: x['time'], reverse=True)
+    except Exception as e:
+        app.logger.error(f'Error listing exp_b2 files: {e}')
+        return jsonify({'error': str(e)}), 500
+    return jsonify(files)
+
+@app.route('/api/exp_b2/result')
+@login_required
+def api_exp_b2_result():
+    filename = request.args.get('file')
+    if not filename:
+        return jsonify({'error': 'file required'}), 400
+    # 防止路径遍历攻击
+    if '..' in filename or '/' in filename or '\\' in filename:
+        return jsonify({'error': 'invalid filename'}), 400
+    fp = os.path.join(app.config['EXP_FOLDER'], filename)
+    if not os.path.exists(fp):
+        app.logger.warning(f'File not found: {fp}')
+        return jsonify({'error': 'not found'}), 404
+    try:
+        with open(fp, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except json.JSONDecodeError as e:
+        app.logger.error(f'JSON decode error for {fp}: {e}')
+        return jsonify({'error': f'Invalid JSON: {str(e)}'}), 500
+    except Exception as e:
+        app.logger.error(f'Error reading file {fp}: {e}')
+        return jsonify({'error': str(e)}), 500
+
+# ========== B3 实验：Prefetched Batch batch size 与聚类策略影响 ==========
+@app.route('/exp_b3')
+@login_required
+def exp_b3():
+    return render_template('exp_b3.html')
+
+@app.route('/api/exp_b3/run', methods=['POST'])
+@login_required
+def api_exp_b3_run():
+    token_count = request.form.get('token_count', '10000')
+    test_duration_sec = request.form.get('test_duration_sec', '60')
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    out_file = os.path.join(app.config['EXP_FOLDER'], f'exp_b3_{timestamp}.json')
+
+    def run_exp():
+        # 使用BASE_DIR确保路径正确
+        base_dir = BASE_DIR
+        exe = os.path.join(base_dir, 'build', 'exp_b3_prefetched_batch')
+        
+        # 验证可执行文件是否存在
+        if not os.path.exists(exe):
+            error_msg = f'Executable not found: {exe}. Please run ./build.sh first.'
+            app.logger.error(error_msg)
+            with open(out_file, 'w') as f:
+                json.dump({'error': error_msg}, f)
+            return
+        
+        # 确保可执行文件有执行权限
+        if not os.access(exe, os.X_OK):
+            error_msg = f'Executable not executable: {exe}'
+            app.logger.error(error_msg)
+            with open(out_file, 'w') as f:
+                json.dump({'error': error_msg}, f)
+            return
+        
+        # exp_b3_prefetched_batch 会运行所有参数组合，所以这里只传递输出文件
+        cmd = [exe, out_file]
+        try:
+            app.logger.info(f'Running exp_b3: {cmd} in {base_dir}')
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, cwd=base_dir)
+            if result.returncode != 0:
+                error_msg = f'Execution failed (code {result.returncode}): {result.stderr}'
+                app.logger.error(error_msg)
+                with open(out_file, 'w') as f:
+                    json.dump({'error': error_msg, 'stdout': result.stdout, 'stderr': result.stderr}, f)
+            else:
+                app.logger.info(f'exp_b3 completed successfully, output: {out_file}')
+        except FileNotFoundError as e:
+            error_msg = f'File not found: {e}'
+            app.logger.error(error_msg)
+            with open(out_file, 'w') as f:
+                json.dump({'error': error_msg}, f)
+        except Exception as e:
+            error_msg = f'Exception: {str(e)}'
+            app.logger.error(error_msg, exc_info=True)
+            with open(out_file, 'w') as f:
+                json.dump({'error': error_msg}, f)
+
+    t = threading.Thread(target=run_exp)
+    t.daemon = True
+    t.start()
+    return jsonify({'status': 'started', 'file': out_file})
+
+@app.route('/api/exp_b3/files')
+@login_required
+def api_exp_b3_files():
+    files = []
+    exp_folder = app.config['EXP_FOLDER']
+    try:
+        if not os.path.exists(exp_folder):
+            app.logger.warning(f'EXP_FOLDER does not exist: {exp_folder}')
+            return jsonify({'error': f'Folder not found: {exp_folder}'}), 500
+        for f in os.listdir(exp_folder):
+            if f.startswith('exp_b3_') and f.endswith('.json'):
+                fp = os.path.join(exp_folder, f)
+                if os.path.isfile(fp):
+                    files.append({'filename': f, 'time': datetime.fromtimestamp(os.path.getmtime(fp)).strftime('%Y-%m-%d %H:%M:%S')})
+        files.sort(key=lambda x: x['time'], reverse=True)
+    except Exception as e:
+        app.logger.error(f'Error listing exp_b3 files: {e}')
+        return jsonify({'error': str(e)}), 500
+    return jsonify(files)
+
+@app.route('/api/exp_b3/result')
+@login_required
+def api_exp_b3_result():
+    filename = request.args.get('file')
+    if not filename:
+        return jsonify({'error': 'file required'}), 400
+    # 防止路径遍历攻击
+    if '..' in filename or '/' in filename or '\\' in filename:
+        return jsonify({'error': 'invalid filename'}), 400
+    fp = os.path.join(app.config['EXP_FOLDER'], filename)
+    if not os.path.exists(fp):
+        app.logger.warning(f'File not found: {fp}')
+        return jsonify({'error': 'not found'}), 404
+    try:
+        with open(fp, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except json.JSONDecodeError as e:
+        app.logger.error(f'JSON decode error for {fp}: {e}')
+        return jsonify({'error': f'Invalid JSON: {str(e)}'}), 500
+    except Exception as e:
+        app.logger.error(f'Error reading file {fp}: {e}')
+        return jsonify({'error': str(e)}), 500
+
 # ========== 仿真 ==========
 @app.route('/login', methods=['GET', 'POST'])
 def login():
