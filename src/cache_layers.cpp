@@ -134,9 +134,36 @@ bool L2Cache::peek(uint32_t token_id, Token& token) {
 bool L2Cache::insert(uint32_t token_id, const Token& token) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    // 简化：实际需要检查容量
-    // size_t token_size = token.size();
-    // 这里应该检查总容量，简化实现
+    // 检查容量限制
+    size_t token_size = token.size();
+    size_t current_size = size();
+    
+    // 如果token已存在，直接更新
+    if (entries_.find(token_id) != entries_.end()) {
+        size_t old_size = entries_[token_id].size();
+        if (current_size - old_size + token_size <= capacity_bytes_) {
+            entries_[token_id] = token;
+            return true;
+        }
+        // 容量不足，需要驱逐
+    }
+    
+    // 检查是否需要驱逐
+    while (current_size + token_size > capacity_bytes_ && !entries_.empty()) {
+        // 使用LRU策略：驱逐最久未访问的token（简化实现：随机驱逐）
+        auto it = entries_.begin();
+        if (it != entries_.end()) {
+            current_size -= it->second.size();
+            entries_.erase(it);
+        } else {
+            break;
+        }
+    }
+    
+    // 如果仍然容量不足，返回false
+    if (current_size + token_size > capacity_bytes_) {
+        return false;
+    }
     
     entries_[token_id] = token;
     return true;
@@ -191,6 +218,38 @@ bool L3Cache::load(uint32_t token_id, Token& token) {
 
 bool L3Cache::insert(uint32_t token_id, const Token& token) {
     std::lock_guard<std::mutex> lock(mutex_);
+    
+    // 检查容量限制
+    size_t token_size = token.size();
+    size_t current_size = size();
+    
+    // 如果token已存在，直接更新
+    if (entries_.find(token_id) != entries_.end()) {
+        size_t old_size = entries_[token_id].size();
+        if (current_size - old_size + token_size <= capacity_bytes_) {
+            entries_[token_id] = token;
+            return true;
+        }
+        // 容量不足，需要驱逐
+    }
+    
+    // 检查是否需要驱逐（L3通常很大，但也要检查）
+    while (current_size + token_size > capacity_bytes_ && !entries_.empty()) {
+        // 使用LRU策略：驱逐最久未访问的token（简化实现：随机驱逐）
+        auto it = entries_.begin();
+        if (it != entries_.end()) {
+            current_size -= it->second.size();
+            entries_.erase(it);
+        } else {
+            break;
+        }
+    }
+    
+    // 如果仍然容量不足，返回false（L3通常不会发生）
+    if (current_size + token_size > capacity_bytes_) {
+        return false;
+    }
+    
     entries_[token_id] = token;
     return true;
 }

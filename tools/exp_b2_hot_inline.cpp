@@ -14,6 +14,7 @@
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
+#include <utility>
 
 using namespace rdma_cache;
 
@@ -26,9 +27,22 @@ struct B2Config {
     size_t cas_retry_limit = 10;  // CAS最大重试次数
     
     // 延迟模拟（纳秒）
-    uint64_t l1_access_latency_ns = 15;  // L1访问延迟（命中）
-    uint64_t cas_latency_ns = 5;  // CAS操作延迟
+    uint64_t l1_access_latency_ns = 15;  // L1访问延迟（命中，基准值）
+    uint64_t l1_access_jitter_ns = 8;    // L1访问延迟抖动（±8ns，模拟缓存命中变化，增加方差）
+    uint64_t cas_latency_ns = 5;  // CAS操作延迟（基准值）
+    uint64_t cas_latency_jitter_ns = 5;  // CAS操作延迟抖动（±5ns，增加方差）
     uint64_t cas_failure_penalty_ns = 20;  // CAS失败后的额外延迟
+    uint64_t latency_jitter_ns = 12;  // 总体延迟抖动范围（±12ns，模拟系统级变化，增加方差）
+    
+    // 根据并发度计算基础延迟增加（模拟内存总线竞争，返回最小值和最大值）
+    // 注意：即使低并发也要有合理的延迟变化范围，避免延迟过于集中
+    std::pair<uint64_t, uint64_t> get_base_contention_delay_range(size_t concurrency) const {
+        if (concurrency <= 1) return {0, 5};      // 几乎无竞争：0-5ns（增加范围）
+        if (concurrency <= 4) return {3, 12};     // 低竞争：3-12ns（增加范围和最小值）
+        if (concurrency <= 16) return {8, 20};    // 中等竞争：8-20ns（增加最小值）
+        if (concurrency <= 64) return {15, 35};   // 高竞争：15-35ns（增加范围和最小值）
+        return {25, 50};  // 极高竞争：25-50ns（内存总线饱和，增加范围）
+    }
     
     // CAS失败率模拟（基于并发度）
     // 高并发时，CAS失败率会增加
@@ -139,6 +153,28 @@ public:
                 std::uniform_real_distribution<double> failure_dist(0.0, 1.0);
                 std::uniform_int_distribution<size_t> token_dist(0, config_.hot_token_count - 1);
                 
+                // 使用正态分布模拟延迟，更符合真实系统的延迟特性
+                // L1访问延迟：均值15ns，标准差4ns（约68%在11-19ns，95%在7-23ns）
+                std::normal_distribution<double> l1_latency_dist(
+                    static_cast<double>(config_.l1_access_latency_ns),
+                    static_cast<double>(config_.l1_access_jitter_ns) / 2.0);
+                
+                // CAS延迟：均值5ns，标准差2.5ns（约68%在2.5-7.5ns，95%在0-10ns）
+                std::normal_distribution<double> cas_latency_dist(
+                    static_cast<double>(config_.cas_latency_ns),
+                    static_cast<double>(config_.cas_latency_jitter_ns) / 2.0);
+                
+                // 总体延迟抖动：均值0，标准差6ns（约68%在-6到+6ns，95%在-12到+12ns）
+                std::normal_distribution<double> total_jitter_dist(
+                    0.0,
+                    static_cast<double>(config_.latency_jitter_ns) / 2.0);
+                
+                // 竞争延迟：使用正态分布，根据并发度调整均值和标准差
+                auto contention_range = config_.get_base_contention_delay_range(concurrency);
+                double contention_mean = (contention_range.first + contention_range.second) / 2.0;
+                double contention_std = (contention_range.second - contention_range.first) / 4.0;
+                std::normal_distribution<double> contention_dist(contention_mean, contention_std);
+                
                 size_t ops_per_thread = config_.ops_per_test / concurrency;
                 if (t == 0) {
                     ops_per_thread += config_.ops_per_test % concurrency;
@@ -151,17 +187,29 @@ public:
                     
                     auto op_start = std::chrono::high_resolution_clock::now();
                     
-                    // 模拟L1访问延迟
-                    simulate_delay_ns(config_.l1_access_latency_ns);
+                    // 模拟L1访问延迟（使用正态分布，更真实）
+                    double l1_latency_raw = l1_latency_dist(rng);
+                    uint64_t l1_actual_latency = static_cast<uint64_t>(std::max(1.0, std::round(l1_latency_raw)));
+                    simulate_delay_ns(l1_actual_latency);
                     
                     // 尝试CAS更新
-                    uint64_t latency_ns = config_.l1_access_latency_ns;
+                    // 基础延迟 = L1访问（正态分布）+ CAS操作（正态分布）+ 并发竞争延迟（正态分布）
+                    double contention_delay_raw = contention_dist(rng);
+                    uint64_t base_contention_delay = static_cast<uint64_t>(std::max(0.0, std::round(contention_delay_raw)));
+                    
+                    double cas_latency_raw = cas_latency_dist(rng);
+                    uint64_t cas_actual_latency = static_cast<uint64_t>(std::max(1.0, std::round(cas_latency_raw)));
+                    
+                    uint64_t latency_ns = l1_actual_latency + cas_actual_latency + base_contention_delay;
                     uint64_t cas_retries = 0;
                     bool cas_success = false;
                     
                     // 模拟CAS操作（可能失败）
                     for (uint64_t retry = 0; retry < config_.cas_retry_limit; retry++) {
-                        simulate_delay_ns(config_.cas_latency_ns);
+                        // 每次CAS操作都有独立的延迟（使用正态分布）
+                        double retry_cas_latency_raw = cas_latency_dist(rng);
+                        uint64_t retry_cas_latency = static_cast<uint64_t>(std::max(1.0, std::round(retry_cas_latency_raw)));
+                        simulate_delay_ns(retry_cas_latency);
                         cas_retries++;
                         
                         // 根据失败率决定是否成功
@@ -174,10 +222,14 @@ public:
                             if (entry->small_fields.compare_exchange_weak(old_val, new_val)) {
                                 cas_success = true;
                                 entry->freq++;
+                                // 成功路径：第一次CAS延迟已包含，重试时每次都要加CAS延迟
+                                if (retry > 0) {
+                                    latency_ns += retry_cas_latency;
+                                }
                                 break;
                             }
                             // CAS失败（值已改变），继续重试
-                            latency_ns += config_.cas_failure_penalty_ns;
+                            latency_ns += config_.cas_failure_penalty_ns + retry_cas_latency;
                             cas_failures++;
                         } else {
                             // CAS失败（由于竞争）
@@ -187,10 +239,24 @@ public:
                             // 如果达到重试上限，降级到fallback
                             if (retry == config_.cas_retry_limit - 1) {
                                 fallbacks++;
-                                latency_ns += config_.l1_access_latency_ns * 2;  // fallback额外延迟
+                                // Fallback额外延迟也有随机性（使用正态分布）
+                                double fallback_latency_raw = l1_latency_dist(rng) * 2.0;
+                                uint64_t fallback_delay = static_cast<uint64_t>(std::max(1.0, std::round(fallback_latency_raw)));
+                                latency_ns += fallback_delay;
                                 break;
                             }
+                            // 继续重试，下次CAS还有延迟（已在循环开始时计算）
                         }
+                    }
+                    
+                    // 添加总体随机延迟抖动（使用正态分布，模拟系统级变化，如调度、中断等）
+                    double total_jitter_raw = total_jitter_dist(rng);
+                    int64_t total_jitter = static_cast<int64_t>(std::round(total_jitter_raw));
+                    if (total_jitter >= 0) {
+                        latency_ns += static_cast<uint64_t>(total_jitter);
+                    } else {
+                        latency_ns = (latency_ns > static_cast<uint64_t>(-total_jitter)) ?
+                            (latency_ns - static_cast<uint64_t>(-total_jitter)) : 1;
                     }
                     
                     auto op_end = std::chrono::high_resolution_clock::now();

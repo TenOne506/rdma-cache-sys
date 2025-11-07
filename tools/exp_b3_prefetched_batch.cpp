@@ -27,11 +27,16 @@ struct B3Config {
     size_t test_duration_sec = 60;  // 每个测试运行60秒
     
     // 延迟模拟（纳秒）
-    uint64_t l1_latency_ns = 15;  // L1访问延迟
-    uint64_t l2_latency_ns = 80;  // L2访问延迟
-    uint64_t l3_latency_ns = 800;  // L3访问延迟
-    uint64_t dma_setup_latency_ns = 100;  // DMA设置延迟
-    double dma_bandwidth_mbps = 32000.0;  // DMA带宽（MB/s）
+    uint64_t l1_latency_ns = 15;  // L1访问延迟（均值）
+    uint64_t l1_latency_std_ns = 4;  // L1延迟标准差（正态分布）
+    uint64_t l2_latency_ns = 80;  // L2访问延迟（均值）
+    uint64_t l2_latency_std_ns = 10;  // L2延迟标准差（正态分布）
+    uint64_t l3_latency_ns = 800;  // L3访问延迟（均值）
+    uint64_t l3_latency_std_ns = 50;  // L3延迟标准差（正态分布）
+    uint64_t dma_setup_latency_ns = 100;  // DMA设置延迟（均值）
+    uint64_t dma_setup_latency_std_ns = 20;  // DMA设置延迟标准差
+    double dma_bandwidth_mbps = 32000.0;  // DMA带宽（MB/s，均值）
+    double dma_bandwidth_std_mbps = 2000.0;  // DMA带宽标准差（MB/s）
     
     // CPU配置
     uint32_t cpu_cores = 8;
@@ -83,7 +88,11 @@ public:
     PrefetchedBatchSimulator(const B3Config& config, size_t batch_size, size_t cluster_size_kb)
         : config_(config), batch_size_(batch_size), cluster_size_bytes_(cluster_size_kb * 1024),
           l1_cache_(8192), l2_cache_(1024), l3_cache_(4096),
-          stop_worker_(false), directory_() {
+          stop_worker_(false), directory_(),
+          dma_rng_(std::random_device{}()),
+          dma_setup_latency_dist_(static_cast<double>(config.dma_setup_latency_ns),
+                                  static_cast<double>(config.dma_setup_latency_std_ns)),
+          dma_bandwidth_dist_(config.dma_bandwidth_mbps, config.dma_bandwidth_std_mbps) {
         
         // 初始化所有token到L3
         for (size_t i = 0; i < config_.token_count; i++) {
@@ -144,6 +153,17 @@ public:
                 }
                 std::discrete_distribution<size_t> token_dist(weights.begin(), weights.end());
                 
+                // 延迟正态分布
+                std::normal_distribution<double> l1_latency_dist(
+                    static_cast<double>(config_.l1_latency_ns),
+                    static_cast<double>(config_.l1_latency_std_ns));
+                std::normal_distribution<double> l2_latency_dist(
+                    static_cast<double>(config_.l2_latency_ns),
+                    static_cast<double>(config_.l2_latency_std_ns));
+                std::normal_distribution<double> l3_latency_dist(
+                    static_cast<double>(config_.l3_latency_ns),
+                    static_cast<double>(config_.l3_latency_std_ns));
+                
                 while (std::chrono::high_resolution_clock::now() < end_time) {
                     uint32_t token_id = static_cast<uint32_t>(token_dist(rng));
                     
@@ -153,15 +173,21 @@ public:
                     L1Entry l1_entry;
                     if (l1_cache_.lookup(token_id, l1_entry)) {
                         l1_hits++;
-                        simulate_delay_ns(config_.l1_latency_ns);
-                        total_latency_ns += config_.l1_latency_ns;
+                        // 使用正态分布模拟L1延迟
+                        double l1_latency_raw = l1_latency_dist(rng);
+                        uint64_t l1_actual_latency = static_cast<uint64_t>(std::max(1.0, std::round(l1_latency_raw)));
+                        simulate_delay_ns(l1_actual_latency);
+                        total_latency_ns += l1_actual_latency;
                     } else {
                         // 尝试L2查找
                         Token token;
                         if (l2_cache_.lookup(token_id, token)) {
                             l2_hits++;
-                            simulate_delay_ns(config_.l2_latency_ns);
-                            total_latency_ns += config_.l2_latency_ns;
+                            // 使用正态分布模拟L2延迟
+                            double l2_latency_raw = l2_latency_dist(rng);
+                            uint64_t l2_actual_latency = static_cast<uint64_t>(std::max(1.0, std::round(l2_latency_raw)));
+                            simulate_delay_ns(l2_actual_latency);
+                            total_latency_ns += l2_actual_latency;
                             
                             // 触发预取（L2->L1）
                             schedule_prefetch(token_id);
@@ -175,8 +201,11 @@ public:
                                 l3_cache_.insert(token_id, token);
                             }
                             l3_hits++;
-                            simulate_delay_ns(config_.l3_latency_ns);
-                            total_latency_ns += config_.l3_latency_ns;
+                            // 使用正态分布模拟L3延迟
+                            double l3_latency_raw = l3_latency_dist(rng);
+                            uint64_t l3_actual_latency = static_cast<uint64_t>(std::max(1.0, std::round(l3_latency_raw)));
+                            simulate_delay_ns(l3_actual_latency);
+                            total_latency_ns += l3_actual_latency;
                             
                             // 从L3加载到L2
                             l2_cache_.insert(token_id, token);
@@ -268,29 +297,53 @@ private:
     L3Cache l3_cache_;
     TokenDirectory directory_;
     
-    std::queue<uint32_t> prefetch_queue_;
+    // 预取请求（带时间戳，用于计算等待时间）
+    struct PrefetchRequest {
+        uint32_t token_id;
+        uint64_t enqueue_time_ns;  // 入队时间
+    };
+    std::queue<PrefetchRequest> prefetch_queue_;
     std::mutex queue_mutex_;
     std::atomic<bool> stop_worker_;
     std::thread worker_thread_;
     std::atomic<uint64_t>* promotion_counter_ = nullptr;
+    std::atomic<uint64_t> total_prefetch_wait_time_ns_{0};  // 总预取等待时间
+    
+    // DMA并发竞争模型
+    std::atomic<uint32_t> active_dma_ops_{0};  // 当前活跃的DMA操作数
+    std::mt19937 dma_rng_;  // DMA随机数生成器
+    std::normal_distribution<double> dma_setup_latency_dist_;
+    std::normal_distribution<double> dma_bandwidth_dist_;
     
     void schedule_prefetch(uint32_t token_id) {
         std::lock_guard<std::mutex> lock(queue_mutex_);
-        prefetch_queue_.push(token_id);
+        uint64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+        PrefetchRequest req;
+        req.token_id = token_id;
+        req.enqueue_time_ns = now;
+        prefetch_queue_.push(req);
     }
     
     void prefetch_worker() {
         while (!stop_worker_) {
             std::vector<uint32_t> batch;
             
-            // 从队列中取出批量token
+            // 从队列中取出批量token（考虑等待时间）
             {
                 std::lock_guard<std::mutex> lock(queue_mutex_);
+                uint64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::high_resolution_clock::now().time_since_epoch()).count();
                 size_t count = std::min(prefetch_queue_.size(), batch_size_);
                 for (size_t i = 0; i < count; i++) {
                     if (!prefetch_queue_.empty()) {
-                        batch.push_back(prefetch_queue_.front());
+                        PrefetchRequest req = prefetch_queue_.front();
                         prefetch_queue_.pop();
+                        // 计算等待时间
+                        if (now > req.enqueue_time_ns) {
+                            total_prefetch_wait_time_ns_ += (now - req.enqueue_time_ns);
+                        }
+                        batch.push_back(req.token_id);
                     }
                 }
             }
@@ -308,11 +361,31 @@ private:
             for (const auto& cluster : clusters) {
                 if (cluster.empty()) continue;
                 
-                // 模拟DMA读取延迟
+                // 模拟DMA读取延迟（考虑并发竞争和随机性）
                 size_t cluster_bytes = std::min(cluster_size_bytes_, cluster.size() * 16);
-                uint64_t dma_latency_ns = config_.dma_setup_latency_ns + 
-                    (cluster_bytes * 8 * 1e9) / (config_.dma_bandwidth_mbps * 1024.0 * 1024.0);
+                
+                // DMA设置延迟（正态分布）
+                double dma_setup_raw = dma_setup_latency_dist_(dma_rng_);
+                uint64_t dma_setup_latency = static_cast<uint64_t>(std::max(1.0, std::round(dma_setup_raw)));
+                
+                // DMA带宽（正态分布，考虑并发竞争）
+                double dma_bandwidth_raw = dma_bandwidth_dist_(dma_rng_);
+                double effective_bandwidth = std::max(1000.0, dma_bandwidth_raw);  // 最小1000 MB/s
+                
+                // 并发竞争：多个DMA操作共享带宽
+                uint32_t concurrent_ops = active_dma_ops_.load() + 1;
+                effective_bandwidth = effective_bandwidth / std::sqrt(static_cast<double>(concurrent_ops));
+                
+                // DMA传输延迟
+                double dma_transfer_latency_ns = (cluster_bytes * 8.0 * 1e9) / 
+                    (effective_bandwidth * 1024.0 * 1024.0);
+                
+                uint64_t dma_latency_ns = dma_setup_latency + static_cast<uint64_t>(std::round(dma_transfer_latency_ns));
+                
+                // 记录活跃DMA操作
+                active_dma_ops_++;
                 simulate_delay_ns(dma_latency_ns);
+                active_dma_ops_--;
                 
                 // 解析并安装到L1
                 for (uint32_t token_id : cluster) {
